@@ -1,0 +1,10 @@
+[project]
+name = "research-system"
+version = "0.1.0"
+description = "AI-driven academic papers research-system"
+requires-python = ">=3.8"
+dependencies = [
+    "pydantic",
+    "arxiv",
+    "requests",
+]

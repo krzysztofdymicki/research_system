@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+env/
+venv/
+.env/
+
+# Editor/IDE files
+.vscode/
+.idea/
+
+# Operating System files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Downloaded PDFs
+papers/
+
+# Pip files
+.pip/
+pip-wheel-metadata/
+
+# Test files
+.pytest_cache/
+.coverage
+*.log
