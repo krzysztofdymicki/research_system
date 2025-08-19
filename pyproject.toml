@@ -7,4 +7,5 @@ dependencies = [
     "pydantic",
     "arxiv",
     "requests",
+    "pymupdf4llm",
 ]

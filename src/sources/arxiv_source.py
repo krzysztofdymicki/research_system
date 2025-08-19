@@ -2,6 +2,8 @@ import arxiv
 from typing import List
 import os
 import requests
+import pymupdf4llm
+import sys
 
 # This try-except block allows the script to be run directly for testing,
 # as well as be imported as a module in the main application.
@@ -62,7 +64,8 @@ def download(publication: Publication, download_dir: str = "papers") -> str | No
     if not os.path.exists(download_dir):
         os.makedirs(download_dir)
 
-    pdf_filename = f"{publication.original_id.replace('/', '_').replace(':', '_')}.pdf"
+    file_id = publication.original_id if publication.original_id is not None else "none"
+    pdf_filename = f"{file_id.replace('/', '_').replace(':', '_')}.pdf"
     pdf_path = os.path.join(download_dir, pdf_filename)
 
     if os.path.exists(pdf_path):
@@ -81,12 +84,25 @@ def download(publication: Publication, download_dir: str = "papers") -> str | No
         print(f"Failed to download PDF for '{publication.title}': {e}")
         return None
 
+def extract_text_from_pdf(pdf_path: str) -> str:
+    """
+    Extracts text from a PDF file and returns it in Markdown format.
+
+    Args:
+        pdf_path (str): The path to the PDF file.
+
+    Returns:
+        str: The extracted text in Markdown format.
+    """
+    md_text = pymupdf4llm.to_markdown(pdf_path)
+    return md_text
+
 def _run_test():
     """
     Internal test function to run a sample search and print the results.
     """
     print("--- Testing arxiv_source module (sync version) ---")
-    query = "quantum machine learning"
+    query = "machine learning"
     print(f"Searching for: '{query}'...")
     results = search(query, max_results=3)
 
@@ -102,12 +118,18 @@ def _run_test():
         print(f"  Authors: {', '.join(pub.authors)}")
         print(f"  URL: {pub.url}")
         print(f"  PDF URL: {pub.pdf_url}")
+        print(f"  ABSTRACT: {pub.abstract}")
+
         print("-" * 20)
     
     # Download the first result
     if results:
         print("\n--- Testing PDF download ---")
-        download(results[0])
+        pdf_path = download(results[0])
+        if pdf_path:
+            print("\n--- Testing PDF text extraction ---")
+            extracted_text = extract_text_from_pdf(pdf_path)
+            print(extracted_text[:500].encode(sys.stdout.encoding, errors='replace').decode(sys.stdout.encoding) + "...")
 
 
 if __name__ == "__main__":
