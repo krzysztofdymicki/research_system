@@ -8,4 +8,5 @@ dependencies = [
     "arxiv",
     "requests",
     "pymupdf4llm",
+    "python-dotenv",
 ]
