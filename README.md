@@ -7,9 +7,9 @@ AI-assisted workflow for discovering academic papers from arXiv and CORE, saving
 - Search providers: arXiv, CORE (v3 API)
 - Reliable PDF downloads with salvage from landing pages
 - PDF → Markdown via `pymupdf4llm`
-- SQLite persistence: publications + search_results
-- LLM relevance scoring (title+abstract vs original query)
-- GUI: search, results browsing, run AI, show-only-kept, download/extract kept, reset controls
+- SQLite persistence: three-stage model — `searches` → `raw_search_results` → `publications`
+- LLM relevance scoring (title+abstract vs the per-row original query) on pending raw results
+- GUI: search, auto-refresh to “Search Results”, analyze pending, promote to Publications; Publications tab for download/extract; reset controls
   
 
 ## Install
@@ -45,23 +45,23 @@ $env:RS_LLM_MODEL = 'google/gemma-3-12b'
 GUI:
 
 ```powershell
-python .\src\app.py
+python -m src.app
 ```
 
 Note: Source modules no longer include ad-hoc self-tests.
 
 ## How It Works
 
-1. Search providers return `Publication` objects (`src/models.py`).
-2. Results are saved into `research.db` (tables `publications`, `search_results`).
-3. LLM analysis compares each row’s title+abstract against its original query; updates `relevance_score` and `relevance_label`.
-4. You can download PDFs and extract Markdown for kept items from the GUI.
+1. Search creates a record in `searches` and stores each provider hit in `raw_search_results`.
+2. LLM analysis compares each row’s title+abstract against its original query and writes only `relevance_score` to `raw_search_results`.
+3. You can “Promote to Publications” (threshold-based), moving accepted items into `publications`.
+4. Publications tab lets you download PDFs and extract Markdown for promoted items only.
 
 ## Notes & Tips
 
 - CORE requires a valid `CORE_API_KEY`.
 - LLM integration is HTTP-only; LM Studio must be running a compatible server at `RS_LLM_ENDPOINT`.
-- The LLM response is parsed robustly from JSON or fenced code blocks; analysis JSON is stored in `search_results.analysis_json`.
+- The LLM response is parsed robustly from JSON or fenced code blocks; analysis JSON is stored in `raw_search_results.analysis_json`.
 - Use the GUI “Reset DB + papers now” or set `RS_RESET_ON_START` before launching to fully reset state.
 
 ## Modules

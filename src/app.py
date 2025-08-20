@@ -2,16 +2,17 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import threading
 import os
-import sys
 import shutil
 
-try:
-    from src.orchestrator import SearchOptions, run_search_and_save
-    from src.db import init_db, get_recent_results, reset_db
-except ModuleNotFoundError:
-    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-    from src.orchestrator import SearchOptions, run_search_and_save
-    from src.db import init_db, get_recent_results, reset_db
+from .orchestrator import (
+    SearchOptions,
+    run_search_and_save,
+    analyze_with_progress,
+    promote_kept,
+    download_pdfs_for_publications,
+    extract_markdown_for_publications,
+)
+from .db import init_db, list_raw_results, list_publications, reset_db
 
 
 class App(tk.Tk):
@@ -59,57 +60,85 @@ class App(tk.Tk):
         for i in range(4):
             frm.columnconfigure(i, weight=1)
 
-        # Results tab
+        # Search Results tab
         res = ttk.Frame(self.notebook, padding=10)
-        self.notebook.add(res, text="Results")
-
-        ttk.Label(res, text="Filter (query substring):").grid(row=0, column=0, sticky=tk.W)
-        self.filter_var = tk.StringVar()
-        ttk.Entry(res, textvariable=self.filter_var, width=30).grid(row=0, column=1, sticky=tk.W)
-        ttk.Button(res, text="Refresh", command=self.refresh_results).grid(row=0, column=2, padx=5)
+        self.notebook.add(res, text="Search Results")
 
         self.tree = ttk.Treeview(
             res,
-            columns=("title", "source", "query", "relevance", "label", "has_md"),
+            columns=("title", "source", "query", "relevance", "analyzed"),
             show="headings",
             height=12,
         )
         self.tree.heading("title", text="Title")
         self.tree.heading("source", text="Source")
         self.tree.heading("query", text="Query")
-        self.tree.heading("relevance", text="Rel.")
-        self.tree.heading("label", text="Label")
-        self.tree.heading("has_md", text="Markdown")
+        self.tree.heading("relevance", text="Score")
+        self.tree.heading("analyzed", text="Analyzed")
         self.tree.column("title", width=360)
         self.tree.column("source", width=80)
         self.tree.column("query", width=180)
         self.tree.column("relevance", width=60, anchor=tk.E)
-        self.tree.column("label", width=80)
-        self.tree.column("has_md", width=90)
-        self.tree.grid(row=1, column=0, columnspan=3, sticky="nsew", pady=(8, 8))
+        self.tree.column("analyzed", width=80)
+        self.tree.grid(row=0, column=0, sticky="nsew", pady=(8, 8))
         self.tree.bind("<<TreeviewSelect>>", self.on_row_select)
 
-        # Analysis controls (operate on all results; filter is just for browsing)
+        # Analysis controls
         ctrl = ttk.Frame(res)
-        ctrl.grid(row=2, column=0, columnspan=3, sticky="ew")
+        ctrl.grid(row=1, column=0, sticky="ew")
         ttk.Label(ctrl, text="AI threshold:").pack(side=tk.LEFT)
         self.threshold_var = tk.IntVar(value=70)
         ttk.Spinbox(ctrl, from_=0, to=100, textvariable=self.threshold_var, width=5).pack(side=tk.LEFT, padx=(4, 10))
-        ttk.Button(ctrl, text="Run AI Analysis", command=self.on_run_ai).pack(side=tk.LEFT)
-        ttk.Button(ctrl, text="Download PDFs (kept)", command=self.on_download_kept).pack(side=tk.LEFT, padx=(10, 0))
-        ttk.Button(ctrl, text="Extract MD (kept)", command=self.on_extract_kept).pack(side=tk.LEFT, padx=(6, 0))
-        self.only_kept_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(ctrl, text="Show only kept", variable=self.only_kept_var, command=self.refresh_results).pack(side=tk.LEFT, padx=10)
+        ttk.Button(ctrl, text="Analyze Pending", command=self.on_run_ai).pack(side=tk.LEFT)
+        # Progress and cancel controls
+        self.ai_progress = ttk.Progressbar(ctrl, length=160, mode="determinate", maximum=100)
+        self.ai_progress.pack(side=tk.LEFT, padx=(10, 6))
+        self.ai_progress_label = ttk.Label(ctrl, text="0/0")
+        self.ai_progress_label.pack(side=tk.LEFT)
+        self.ai_cancel_requested = False
+        self.ai_cancel_btn = ttk.Button(ctrl, text="Cancel", command=self.on_cancel_ai)
+        self.ai_cancel_btn.pack(side=tk.LEFT, padx=(10, 0))
+        ttk.Button(ctrl, text="Promote to Publications", command=self.on_promote).pack(side=tk.LEFT, padx=(10, 0))
 
         self.detail = tk.Text(res, height=8, wrap=tk.WORD)
-        self.detail.grid(row=3, column=0, columnspan=3, sticky="nsew")
+        self.detail.grid(row=2, column=0, sticky="nsew")
 
-        res.rowconfigure(1, weight=1)
+        res.rowconfigure(0, weight=1)
+        res.rowconfigure(2, weight=1)
         res.columnconfigure(0, weight=1)
-        res.columnconfigure(1, weight=0)
-        res.columnconfigure(2, weight=0)
 
+        # Publications tab
+        pubs = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(pubs, text="Publications")
+
+        ttk.Button(pubs, text="Download PDFs", command=self.on_download_pubs).grid(row=0, column=0, sticky=tk.W)
+        ttk.Button(pubs, text="Extract Markdown", command=self.on_extract_pubs).grid(row=0, column=1, sticky=tk.W, padx=6)
+
+        self.pubs_tree = ttk.Treeview(
+            pubs,
+            columns=("title", "source", "pdf", "md"),
+            show="headings",
+            height=12,
+        )
+        self.pubs_tree.heading("title", text="Title")
+        self.pubs_tree.heading("source", text="Source")
+        self.pubs_tree.heading("pdf", text="PDF")
+        self.pubs_tree.heading("md", text="Markdown")
+        self.pubs_tree.column("title", width=420)
+        self.pubs_tree.column("source", width=80)
+        self.pubs_tree.column("pdf", width=120)
+        self.pubs_tree.column("md", width=100)
+        self.pubs_tree.grid(row=1, column=0, columnspan=3, sticky="nsew", pady=(8, 8))
+
+        pubs.rowconfigure(1, weight=1)
+        pubs.columnconfigure(0, weight=1)
+        pubs.columnconfigure(1, weight=0)
+        pubs.columnconfigure(2, weight=0)
+
+        # Initial loads
+        self._rows_by_id = {}
         self.refresh_results()
+        self.refresh_publications()
 
     def on_run(self):
         query = self.query_var.get().strip()
@@ -127,41 +156,33 @@ class App(tk.Tk):
         )
 
         self.run_btn.config(state=tk.DISABLED)
-        self.status_var.set("Running ...")
+        self.status_var.set("Running search ...")
 
         def work():
             try:
                 total, saved = run_search_and_save(opts)
-                self.status_var.set(f"Done. Fetched {total} items. Saved {saved}.")
+                self.status_var.set(f"Search complete. Found {total}, saved {saved} unique.")
             except Exception as e:
-                self.status_var.set("Error. See console.")
-                messagebox.showerror("Error", str(e))
+                messagebox.showerror("Search Error", str(e))
             finally:
                 self.run_btn.config(state=tk.NORMAL)
+                self.refresh_results()
 
         threading.Thread(target=work, daemon=True).start()
 
     def refresh_results(self):
         conn = init_db()
-        rows = get_recent_results(
-            conn,
-            query_filter=self.filter_var.get() or None,
-            only_kept=self.only_kept_var.get(),
-            limit=200,
-        )
+        rows = list_raw_results(conn, limit=500)
+        self._rows_by_id = {}
         for item in self.tree.get_children():
             self.tree.delete(item)
         for r in rows:
-            rel = r.get("relevance_score")
-            label = r.get("relevance_label") or ""
-            rel_disp = "" if rel is None else f"{int(rel)}"
-            self.tree.insert(
-                "",
-                tk.END,
-                iid=str(r["search_result_id"]),
-                values=(r["title"], r["source"], r["query"], rel_disp, label, "yes" if r["has_markdown"] else "no"),
-            )
-        self._rows_by_id = {str(r["search_result_id"]): r for r in rows}
+            rid = str(r["id"])
+            score = r.get("relevance_score")
+            analyzed = "yes" if score is not None else "no"
+            score_str = "" if score is None else str(int(score)) if isinstance(score, (int, float)) else str(score)
+            self.tree.insert("", tk.END, iid=rid, values=(r["title"], r["source"], r.get("query") or "", score_str, analyzed))
+            self._rows_by_id[rid] = r
 
     def on_row_select(self, _evt):
         sel = self.tree.selection()
@@ -175,11 +196,10 @@ class App(tk.Tk):
         lines = [
             f"Title: {r['title']}",
             f"Source: {r['source']}",
-            f"Query: {r['query']}",
+            f"Query: {r.get('query') or ''}",
             f"URL: {r['url']}",
-            f"PDF: {r.get('pdf_path') or r.get('pdf_url')}",
+            f"PDF (raw): {r.get('pdf_url')}",
             f"Relevance: {r.get('relevance_score')}",
-            f"Label: {r.get('relevance_label')}",
             f"Authors: {authors}",
             f"Abstract: {r.get('abstract') or ''}",
         ]
@@ -188,41 +208,92 @@ class App(tk.Tk):
 
     def on_run_ai(self):
         threshold = self.threshold_var.get()
+        self.ai_cancel_requested = False
+
+        def cancel_flag() -> bool:
+            return self.ai_cancel_requested
+
+        def progress_cb(done: int, total: int, kept: int):
+            try:
+                pct = int((done / total) * 100) if total else 0
+            except Exception:
+                pct = 0
+            def update_ui():
+                self.ai_progress['value'] = pct
+                self.ai_progress_label.config(text=f"{done}/{total} ({kept} kept)")
+                try:
+                    self.refresh_results()
+                except Exception:
+                    pass
+            try:
+                self.after(0, update_ui)
+            except Exception:
+                pass
+
         def work():
             try:
-                from src.orchestrator import analyze_and_filter
-                analyzed, kept = analyze_and_filter(None, threshold)
-                self.status_var.set(f"AI analyzed {analyzed}, kept {kept}.")
+                analyzed, kept = analyze_with_progress(None, threshold, cancel_flag, progress_cb)
+                self.status_var.set(f"AI analyzed {analyzed}, >= {threshold}: {kept}.")
             except Exception as e:
                 messagebox.showerror("AI Error", str(e))
             finally:
+                try:
+                    self.after(0, lambda: self.ai_progress.config(value=0))
+                    self.after(0, lambda: self.ai_progress_label.config(text="0/0"))
+                except Exception:
+                    pass
                 self.refresh_results()
 
         threading.Thread(target=work, daemon=True).start()
 
-    def on_download_kept(self):
+    def on_cancel_ai(self):
+        self.ai_cancel_requested = True
+
+    def on_promote(self):
+        threshold = self.threshold_var.get()
+
         def work():
             try:
-                from src.orchestrator import download_pdfs_for_kept
-                attempted, downloaded = download_pdfs_for_kept(None)
+                inserted = promote_kept(threshold, None)
+                self.status_var.set(f"Promoted {inserted} items to Publications.")
+            except Exception as e:
+                messagebox.showerror("Promote Error", str(e))
+            finally:
+                self.refresh_publications()
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_download_pubs(self):
+        def work():
+            try:
+                attempted, downloaded = download_pdfs_for_publications()
                 self.status_var.set(f"PDFs: attempted {attempted}, downloaded {downloaded}.")
             except Exception as e:
                 messagebox.showerror("Download Error", str(e))
             finally:
-                self.refresh_results()
+                self.refresh_publications()
         threading.Thread(target=work, daemon=True).start()
 
-    def on_extract_kept(self):
+    def on_extract_pubs(self):
         def work():
             try:
-                from src.orchestrator import extract_markdown_for_kept
-                attempted, extracted = extract_markdown_for_kept(None)
+                attempted, extracted = extract_markdown_for_publications()
                 self.status_var.set(f"Markdown: attempted {attempted}, extracted {extracted}.")
             except Exception as e:
                 messagebox.showerror("Extract Error", str(e))
             finally:
-                self.refresh_results()
+                self.refresh_publications()
         threading.Thread(target=work, daemon=True).start()
+
+    def refresh_publications(self):
+        conn = init_db()
+        rows = list_publications(conn, limit=200)
+        for item in self.pubs_tree.get_children():
+            self.pubs_tree.delete(item)
+        for r in rows:
+            pdf = "yes" if r.get("pdf_path") else "no"
+            md = "yes" if r.get("markdown") else "no"
+            self.pubs_tree.insert("", tk.END, iid=str(r["id"]), values=(r["title"], r["source"], pdf, md))
 
     # Reset helpers
     def _reset_database_and_papers(self):

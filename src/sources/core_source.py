@@ -1,11 +1,11 @@
-import os
 import requests
 from typing import List
-import sys
 
-from src.models import Publication
-from src.sources.source import Source, download_publication, extract_text_from_pdf
-from src.config import CORE_API_KEY
+from ..models import Publication
+from .source import Source
+import os
+import requests
+from ..config import CORE_API_KEY
 
 class CoreSource(Source):
     """
@@ -85,6 +85,45 @@ class CoreSource(Source):
         except requests.exceptions.RequestException as e:
             print(f"Error searching CORE: {e}")
             return []
+
+    def download_pdf(self, pub: Publication, download_dir: str = "papers", debug: bool = False) -> str | None:
+        if not os.path.exists(download_dir):
+            os.makedirs(download_dir, exist_ok=True)
+
+        pdf_url = pub.pdf_url or None
+        if not pdf_url:
+            return None
+        file_id = pub.original_id or "core"
+        pdf_filename = f"{file_id.replace('/', '_').replace(':', '_')}.pdf"
+        pdf_path = os.path.join(download_dir, pdf_filename)
+        if os.path.exists(pdf_path):
+            try:
+                with open(pdf_path, "rb") as fh:
+                    if fh.read(5).startswith(b"%PDF"):
+                        return pdf_path
+            except Exception:
+                pass
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
+        }
+        try:
+            r = requests.get(pdf_url, stream=True, allow_redirects=True, headers=headers, timeout=60)
+            r.raise_for_status()
+            first = next(r.iter_content(chunk_size=8192), b"")
+            ctype = (r.headers.get("Content-Type") or "").lower()
+            if not (first.startswith(b"%PDF") or "application/pdf" in ctype):
+                r.close()
+                return None
+            with open(pdf_path, "wb") as f:
+                if first:
+                    f.write(first)
+                for chunk in r.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            return pdf_path
+        except requests.exceptions.RequestException:
+            return None
 
 """
 CoreSource module defines the CORE provider. No direct CLI harness.

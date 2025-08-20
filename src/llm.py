@@ -3,7 +3,7 @@ import json
 from typing import Dict, Any, Optional
 
 import requests
-from src.config import (
+from .config import (
     LLM_ENDPOINT,
     LLM_MODEL,
     LLM_TEMPERATURE,
