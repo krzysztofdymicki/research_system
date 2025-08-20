@@ -2,22 +2,10 @@ import os
 import requests
 from typing import List
 import sys
-import argparse
-from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
-
-try:
-    from src.models import Publication
-    from src.sources.source import Source, download_publication, extract_text_from_pdf
-except ModuleNotFoundError:
-    # Allow running this file directly: add project root to sys.path
-    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
-    from src.models import Publication
-    from src.sources.source import Source, download_publication, extract_text_from_pdf
-
-CORE_API_KEY = os.environ.get("CORE_API_KEY")
+from src.models import Publication
+from src.sources.source import Source, download_publication, extract_text_from_pdf
+from src.config import CORE_API_KEY
 
 class CoreSource(Source):
     """
@@ -98,48 +86,7 @@ class CoreSource(Source):
             print(f"Error searching CORE: {e}")
             return []
 
-def _run_test():
-    """
-    Internal test function to run a sample search and print the results.
-    """
-    print("--- Testing CoreSource module ---")
-    parser = argparse.ArgumentParser(description="Test CoreSource")
-    parser.add_argument("--query", type=str, default="reinforcement learning")
-    parser.add_argument("--max-results", type=int, default=3)
-    parser.add_argument("--offset", type=int, default=0)
-    parser.add_argument("--download", action="store_true", help="Download PDFs for results")
-    args = parser.parse_args()
-
-    core_source = CoreSource(debug=True)
-    query = args.query
-    print(f"Searching for: '{query}'...")
-    results = core_source.search(query, max_results=args.max_results, offset=args.offset)
-
-    if not results:
-        print(f"No results found for '{query}'")
-        return
-
-    print(f"\nFound {len(results)} results:\n")
-    for pub in results:
-        print(f"  ID (internal): {pub.id}")
-        print(f"  ID (original): {pub.original_id}")
-        print(f"  Title: {pub.title}")
-        print(f"  Authors: {', '.join(pub.authors) if pub.authors else 'N/A'}")
-        print(f"  URL: {pub.url}")
-        print(f"  PDF URL: {pub.pdf_url}")
-        print(f"  Abstract: {pub.abstract}")
-        print("-" * 20)
-
-    if args.download and results:
-        print("\n--- Batch PDF download ---")
-        ok = 0
-        for i, pub in enumerate(results, start=1):
-            print(f"[{i}/{len(results)}] Downloading: {pub.title}")
-            pdf_path = download_publication(pub, debug=True)
-            if pdf_path:
-                ok += 1
-        print(f"Downloaded {ok}/{len(results)} PDFs")
-
-
-if __name__ == "__main__":
-    _run_test()
+"""
+CoreSource module defines the CORE provider. No direct CLI harness.
+Use the GUI or orchestrator in application flows.
+"""

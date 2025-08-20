@@ -3,12 +3,18 @@ import json
 from typing import Dict, Any, Optional
 
 import requests
+from src.config import (
+    LLM_ENDPOINT,
+    LLM_MODEL,
+    LLM_TEMPERATURE,
+    LLM_MAX_TOKENS,
+)
 
 
 class LMStudioClient:
     def __init__(self, endpoint: Optional[str] = None, model: Optional[str] = None, timeout: int = 60):
-        self.endpoint = endpoint or os.environ.get("RS_LLM_ENDPOINT", "http://localhost:1234/v1/chat/completions")
-        self.model = model or os.environ.get("RS_LLM_MODEL", "google/gemma-3-12b")
+        self.endpoint = endpoint or LLM_ENDPOINT
+        self.model = model or LLM_MODEL
         self.timeout = timeout
 
     @staticmethod
@@ -65,8 +71,8 @@ class LMStudioClient:
         )
 
         # HTTP OpenAI-compatible endpoint only
-        temperature = float(os.environ.get("RS_LLM_TEMPERATURE", "0.2"))
-        max_tokens = int(os.environ.get("RS_LLM_MAX_TOKENS", "256"))
+        temperature = LLM_TEMPERATURE
+        max_tokens = LLM_MAX_TOKENS
         payload = {
             "model": self.model,
             "messages": [

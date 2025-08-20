@@ -1,64 +1,75 @@
-# GEMINI.md - Project: research-system
+# Research System
 
-## Project Overview
+AI-assisted workflow for discovering academic papers from arXiv and CORE, saving metadata to SQLite, downloading PDFs reliably (with landing-page salvage), extracting Markdown from PDFs, and scoring relevance with a local LLM (LM Studio friendly). Comes with a simple Tkinter GUI.
 
-This project is an AI-driven academic paper research system. It provides functionality to search for academic papers from various sources and download them. The system is written in Python and uses the `pydantic` library for data modeling, ensuring data integrity and a clear structure.
+## Features
 
-The main data model is `Publication`, which represents an academic paper with fields like title, authors, URL, and source.
+- Search providers: arXiv, CORE (v3 API)
+- Reliable PDF downloads with salvage from landing pages
+- PDF → Markdown via `pymupdf4llm`
+- SQLite persistence: publications + search_results
+- LLM relevance scoring (title+abstract vs original query)
+- GUI: search, results browsing, run AI, show-only-kept, download/extract kept, reset controls
+  
 
-Currently, the system supports searching for papers on arXiv and CORE.
+## Install
 
-## Building and Running
-
-The project is structured as a Python package and its dependencies are managed with `pyproject.toml`.
-
-### Dependencies
-
-To install the required dependencies, run the following command in the root directory of the project:
-
-```bash
+```powershell
 pip install -e .
 ```
 
-### Running
+Python 3.8+ required.
 
-The `src/sources/arxiv_source.py` and `src/sources/core_source.py` scripts can be run directly to test the search functionality for each source.
+## Configure
 
-```bash
-python src/sources/arxiv_source.py
-python src/sources/core_source.py
+Environment variables (optional but recommended):
+
+- `CORE_API_KEY`: token for CORE v3 API
+- `RS_LLM_ENDPOINT`: OpenAI-compatible chat completions endpoint (default `http://localhost:1234/v1/chat/completions`)
+- `RS_LLM_MODEL`: default `google/gemma-3-12b`
+- `RS_LLM_TEMPERATURE`: default `0.2`
+- `RS_LLM_MAX_TOKENS`: default `256`
+- `RS_RESET_ON_START`: `1|true|yes` to reset DB and `papers/` at next GUI start
+- `RS_SALVAGE_HEAD_TIMEOUT`: default `20`; `RS_SALVAGE_GET_TIMEOUT`: `60`; `RS_SALVAGE_MAX_CANDIDATES`: `5`
+
+Quick set in PowerShell:
+
+```powershell
+$env:CORE_API_KEY = 'your_core_api_key'
+$env:RS_LLM_ENDPOINT = 'http://localhost:1234/v1/chat/completions'
+$env:RS_LLM_MODEL = 'google/gemma-3-12b'
 ```
 
-This will perform a sample search and print the results. It will also attempt to download the first result.
+## Run
 
-### API Keys
+GUI:
 
-Some data sources require an API key to be used. These keys should be set as environment variables.
+```powershell
+python .\src\app.py
+```
 
-*   **CORE:** For the CORE source, you need to set the `CORE_API_KEY` environment variable to your CORE API key. If this key is not set, the CORE source will be disabled.
+Note: Source modules no longer include ad-hoc self-tests.
 
-## Development Conventions
+## How It Works
 
-### Code Style
+1. Search providers return `Publication` objects (`src/models.py`).
+2. Results are saved into `research.db` (tables `publications`, `search_results`).
+3. LLM analysis compares each row’s title+abstract against its original query; updates `relevance_score` and `relevance_label`.
+4. You can download PDFs and extract Markdown for kept items from the GUI.
 
-The code follows standard Python conventions (PEP 8).
+## Notes & Tips
 
-### Data Models
+- CORE requires a valid `CORE_API_KEY`.
+- LLM integration is HTTP-only; LM Studio must be running a compatible server at `RS_LLM_ENDPOINT`.
+- The LLM response is parsed robustly from JSON or fenced code blocks; analysis JSON is stored in `search_results.analysis_json`.
+- Use the GUI “Reset DB + papers now” or set `RS_RESET_ON_START` before launching to fully reset state.
 
-The project uses `pydantic` for data modeling. All data models are defined in `src/models.py`.
+## Modules
 
-### Sources
+- `src/sources/arxiv_source.py`, `src/sources/core_source.py`, `src/sources/source.py`
+- `src/orchestrator.py`, `src/llm.py`, `src/db.py`, `src/models.py`
+- `src/app.py`
 
-Each source of publications (like arXiv or CORE) is implemented as a separate module in the `src/sources` directory, following a common `Source` interface.
+## License
 
-### Testing
-
-Each source module contains a `_run_test` function for basic testing. For more comprehensive testing, a dedicated testing framework should be set up.
-
-## Future Development
-
-This project is under active development and has the following features planned for the future:
-
-*   **Multiple Sources:** The application will be extended to support other sources of academic papers.
-*   **PDF Reading:** The application will have the ability to read downloaded PDF files. This will allow for further processing and analysis of the paper's content.
-*   **LLM-based Summarization:** The application will use a Large Language Model (LLM) to summarize the content of the papers. This will help in quickly determining the relevance of a paper for academic research.
+Proprietary/internal by default. Do not redistribute without permission.
