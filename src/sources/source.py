@@ -14,7 +14,7 @@ class Source(ABC):
         pass
 
     @abstractmethod
-    def download_pdf(self, pub: Publication, download_dir: str = "papers", debug: bool = False) -> str | None:
+    def download_pdf(self, pub: Publication, download_dir: str = "papers") -> str | None:
         pass
 
 

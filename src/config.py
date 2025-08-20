@@ -67,8 +67,4 @@ LLM_MAX_TOKENS: int = getenv_int("RS_LLM_MAX_TOKENS", 256)
 
 # Expose other knobs for central access (optional)
 CORE_API_KEY: Optional[str] = _getenv("CORE_API_KEY")
-SALVAGE_HEAD_TIMEOUT: float = getenv_float("RS_SALVAGE_HEAD_TIMEOUT", 20.0)
-SALVAGE_GET_TIMEOUT: float = getenv_float("RS_SALVAGE_GET_TIMEOUT", 60.0)
-SALVAGE_MAX_CANDIDATES: int = getenv_int("RS_SALVAGE_MAX_CANDIDATES", 5)
-
 RESET_ON_START: bool = getenv_bool("RS_RESET_ON_START", False)

@@ -54,7 +54,8 @@ def run_search_and_save(opts: SearchOptions) -> Tuple[int, int]:
     saved = 0
     for provider in providers:
         results = provider.search(opts.query, max_results=opts.max_results)
-        total += len(results)
+        count = len(results)
+        total += count
         for pub in results:
             raw_id = insert_raw_result(
                 conn,
@@ -69,7 +70,7 @@ def run_search_and_save(opts: SearchOptions) -> Tuple[int, int]:
             )
             if raw_id != -1:
                 saved += 1
-
+            
     return total, saved
 
 
@@ -249,9 +250,9 @@ def download_pdfs_for_publications() -> Tuple[int, int]:
         try:
             src = (r.get("source") or "").lower()
             if src == "arxiv":
-                pdf_path = ArxivSource().download_pdf(pub, debug=False)
+                pdf_path = ArxivSource().download_pdf(pub)
             elif src == "core":
-                pdf_path = CoreSource().download_pdf(pub, debug=False)
+                pdf_path = CoreSource().download_pdf(pub)
             else:
                 pdf_path = None
             if pdf_path:

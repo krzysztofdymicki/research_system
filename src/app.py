@@ -3,6 +3,7 @@ from tkinter import ttk, messagebox
 import threading
 import os
 import shutil
+from pathlib import Path
 
 from .orchestrator import (
     SearchOptions,
@@ -301,15 +302,14 @@ class App(tk.Tk):
             reset_db(os.path.join(self.root_dir, "research.db"))
         except Exception:
             pass
-        papers_dir = os.path.join(self.root_dir, "papers")
-        if os.path.isdir(papers_dir):
-            for name in os.listdir(papers_dir):
-                path = os.path.join(papers_dir, name)
+        papers_dir = Path(self.root_dir) / "papers"
+        if papers_dir.is_dir():
+            for path in papers_dir.iterdir():
                 try:
-                    if os.path.isdir(path):
-                        shutil.rmtree(path, ignore_errors=True)
+                    if path.is_dir():
+                        shutil.rmtree(str(path), ignore_errors=True)
                     else:
-                        os.remove(path)
+                        path.unlink(missing_ok=True)
                 except Exception:
                     pass
 

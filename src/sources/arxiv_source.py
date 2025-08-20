@@ -48,7 +48,7 @@ class ArxivSource(Source):
             publications.append(pub)
         return publications
 
-    def download_pdf(self, pub: Publication, download_dir: str = "papers", debug: bool = False) -> Optional[str]:
+    def download_pdf(self, pub: Publication, download_dir: str = "papers") -> Optional[str]:
         if not os.path.exists(download_dir):
             os.makedirs(download_dir, exist_ok=True)
 
