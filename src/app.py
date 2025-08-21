@@ -10,10 +10,10 @@ from .orchestrator import (
     run_search_and_save,
     analyze_with_progress,
     promote_kept,
-    download_pdfs_for_publications,
-    extract_markdown_for_publications,
 )
-from .db import init_db, list_raw_results, list_publications, reset_db
+from .db import init_db, list_raw_results, list_publications, reset_db, update_publication_assets
+from .models import Publication
+from .sources.source import download_pdf_for_publication, extract_text_from_pdf
 
 
 class App(tk.Tk):
@@ -136,8 +136,10 @@ class App(tk.Tk):
         pubs = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(pubs, text="Publications")
 
-        ttk.Button(pubs, text="Download PDFs", command=self.on_download_pubs).grid(row=0, column=0, sticky=tk.W)
-        ttk.Button(pubs, text="Extract Markdown", command=self.on_extract_pubs).grid(row=0, column=1, sticky=tk.W, padx=6)
+        self.download_btn = ttk.Button(pubs, text="Download PDFs", command=self.on_download_pubs)
+        self.download_btn.grid(row=0, column=0, sticky=tk.W)
+        self.extract_btn = ttk.Button(pubs, text="Extract Markdown", command=self.on_extract_pubs)
+        self.extract_btn.grid(row=0, column=1, sticky=tk.W, padx=6)
 
         self.pubs_tree = ttk.Treeview(
             pubs,
@@ -193,11 +195,13 @@ class App(tk.Tk):
             try:
                 total, saved = run_search_and_save(opts)
                 self.status_var.set(f"Search complete. Found {total}, saved {saved} unique.")
+                # Auto-switch to Search Results
+                self.after(0, lambda: self.notebook.select(1))
             except Exception as e:
-                messagebox.showerror("Search Error", str(e))
+                self.after(0, lambda: messagebox.showerror("Search Error", str(e)))
             finally:
-                self.run_btn.config(state=tk.NORMAL)
-                self.refresh_results()
+                self.after(0, lambda: self.run_btn.config(state=tk.NORMAL))
+                self.after(0, self.refresh_results)
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -294,16 +298,16 @@ class App(tk.Tk):
                     progress_cb,
                     self.research_title_var.get().strip() or None,
                 )
-                self.status_var.set(f"AI analyzed {analyzed}, >= {threshold}: {kept}.")
+                self.after(0, lambda: self.status_var.set(f"AI analyzed {analyzed}, >= {threshold}: {kept}."))
             except Exception as e:
-                messagebox.showerror("AI Error", str(e))
+                self.after(0, lambda: messagebox.showerror("AI Error", str(e)))
             finally:
                 try:
                     self.after(0, lambda: self.ai_progress.config(value=0))
                     self.after(0, lambda: self.ai_progress_label.config(text="0/0"))
                 except Exception:
                     pass
-                self.refresh_results()
+                self.after(0, self.refresh_results)
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -316,34 +320,106 @@ class App(tk.Tk):
         def work():
             try:
                 inserted = promote_kept(threshold, None)
-                self.status_var.set(f"Promoted {inserted} items to Publications.")
+                self.after(0, lambda: self.status_var.set(f"Promoted {inserted} items to Publications."))
             except Exception as e:
-                messagebox.showerror("Promote Error", str(e))
+                self.after(0, lambda: messagebox.showerror("Promote Error", str(e)))
             finally:
-                self.refresh_publications()
+                self.after(0, self.refresh_publications)
 
         threading.Thread(target=work, daemon=True).start()
 
     def on_download_pubs(self):
+        self.download_btn.config(state=tk.DISABLED)
+        self.extract_btn.config(state=tk.DISABLED)
+        
         def work():
             try:
-                attempted, downloaded = download_pdfs_for_publications()
-                self.status_var.set(f"PDFs: attempted {attempted}, downloaded {downloaded}.")
+                # Get list of publications needing PDFs
+                conn = init_db()
+                pubs = list_publications(conn, limit=500)
+                to_download = [p for p in pubs if not p.get("pdf_path")]
+                total = len(to_download)
+                downloaded = 0
+                
+                for idx, pub in enumerate(to_download, 1):
+                    try:
+                        # Update status before each download
+                        self.after(0, lambda i=idx, t=total: self.status_var.set(f"Downloading PDF {i}/{t}..."))
+                        
+                        # Convert dict to Publication model
+                        pub_obj = Publication(
+                            id=pub["id"],
+                            original_id=pub.get("original_id"),
+                            title=pub["title"],
+                            authors=pub.get("authors") or [],
+                            abstract=pub.get("abstract"),
+                            url=pub["url"],
+                            pdf_url=pub.get("pdf_url"),
+                            source=pub["source"],
+                        )
+                        
+                        pdf_path = download_pdf_for_publication(pub_obj)
+                        if pdf_path:
+                            conn = init_db()
+                            update_publication_assets(conn, publication_id=pub["id"], pdf_path=pdf_path)
+                            downloaded += 1
+                            
+                        # Refresh GUI after each successful download
+                        self.after(0, self.refresh_publications)
+                        
+                    except Exception:
+                        pass  # Continue with next PDF
+                
+                self.after(0, lambda: self.status_var.set(f"PDFs: attempted {total}, downloaded {downloaded}."))
+                
             except Exception as e:
-                messagebox.showerror("Download Error", str(e))
+                self.after(0, lambda: messagebox.showerror("Download Error", str(e)))
             finally:
-                self.refresh_publications()
+                self.after(0, lambda: self.download_btn.config(state=tk.NORMAL))
+                self.after(0, lambda: self.extract_btn.config(state=tk.NORMAL))
+                self.after(0, self.refresh_publications)
+        
         threading.Thread(target=work, daemon=True).start()
 
     def on_extract_pubs(self):
+        self.download_btn.config(state=tk.DISABLED)
+        self.extract_btn.config(state=tk.DISABLED)
+        
         def work():
             try:
-                attempted, extracted = extract_markdown_for_publications()
-                self.status_var.set(f"Markdown: attempted {attempted}, extracted {extracted}.")
+                # Get list of publications with PDFs but no markdown
+                conn = init_db()
+                pubs = list_publications(conn, limit=500)
+                to_extract = [p for p in pubs if p.get("pdf_path") and not p.get("markdown")]
+                total = len(to_extract)
+                extracted = 0
+                
+                for idx, pub in enumerate(to_extract, 1):
+                    try:
+                        # Update status before each extraction
+                        self.after(0, lambda i=idx, t=total: self.status_var.set(f"Extracting markdown {i}/{t}..."))
+                        
+                        text = extract_text_from_pdf(pub["pdf_path"])
+                        if text:
+                            conn = init_db()
+                            update_publication_assets(conn, publication_id=pub["id"], markdown=text)
+                            extracted += 1
+                            
+                        # Refresh GUI after each successful extraction
+                        self.after(0, self.refresh_publications)
+                        
+                    except Exception:
+                        pass  # Continue with next extraction
+                
+                self.after(0, lambda: self.status_var.set(f"Markdown: attempted {total}, extracted {extracted}."))
+                
             except Exception as e:
-                messagebox.showerror("Extract Error", str(e))
+                self.after(0, lambda: messagebox.showerror("Extract Error", str(e)))
             finally:
-                self.refresh_publications()
+                self.after(0, lambda: self.download_btn.config(state=tk.NORMAL))
+                self.after(0, lambda: self.extract_btn.config(state=tk.NORMAL))
+                self.after(0, self.refresh_publications)
+        
         threading.Thread(target=work, daemon=True).start()
 
     def refresh_publications(self):
@@ -372,7 +448,6 @@ class App(tk.Tk):
                         path.unlink(missing_ok=True)
                 except Exception:
                     pass
-
 
     def on_reset_now(self):
         if messagebox.askyesno("Confirm Reset", "This will delete research.db and all files in papers/. Continue?"):
