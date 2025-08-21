@@ -34,7 +34,8 @@ class CoreSource(Source):
         try:
             while remaining > 0:
                 batch_limit = min(remaining, 100)
-                json_payload = {"q": query, "limit": batch_limit}
+                sanitized_q = query.replace('"', '').replace("'", '') if isinstance(query, str) else query
+                json_payload = {"q": sanitized_q, "limit": batch_limit}
                 if cur_offset:
                     json_payload["offset"] = cur_offset
 
@@ -67,7 +68,22 @@ class CoreSource(Source):
                     if not main_url:
                         main_url = display_url or pick_link(links, 'download')
 
-                    pdf_url = item.get('downloadUrl') or pick_link(links, 'download')
+                    # Build and normalize pdf_url, always converting arXiv abs→pdf
+                    def _normalize_arxiv_pdf(u: str | None) -> str | None:
+                        if not u:
+                            return None
+                        s = u.strip()
+                        if "arxiv.org/abs/" in s:
+                            s = s.replace("/abs/", "/pdf/")
+                            if not s.endswith(".pdf"):
+                                s += ".pdf"
+                            return s
+                        if "arxiv.org/pdf/" in s and not s.endswith(".pdf"):
+                            return s + ".pdf"
+                        return s
+
+                    candidate = item.get('downloadUrl') or pick_link(links, 'download') or display_url or pick_link(links, 'reader') or main_url
+                    pdf_url = _normalize_arxiv_pdf(candidate)
 
                     pub = Publication(
                         original_id=orig_id,
@@ -103,44 +119,7 @@ class CoreSource(Source):
             print(f"Error searching CORE: {e}")
             return []
 
-    def download_pdf(self, pub: Publication, download_dir: str = "papers") -> str | None:
-        if not os.path.exists(download_dir):
-            os.makedirs(download_dir, exist_ok=True)
-
-        pdf_url = pub.pdf_url or None
-        if not pdf_url:
-            return None
-        file_id = pub.original_id or "core"
-        pdf_filename = f"{file_id.replace('/', '_').replace(':', '_')}.pdf"
-        pdf_path = os.path.join(download_dir, pdf_filename)
-        if os.path.exists(pdf_path):
-            try:
-                with open(pdf_path, "rb") as fh:
-                    if fh.read(5).startswith(b"%PDF"):
-                        return pdf_path
-            except Exception:
-                pass
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
-        }
-        try:
-            r = requests.get(pdf_url, stream=True, allow_redirects=True, headers=headers, timeout=60)
-            r.raise_for_status()
-            first = next(r.iter_content(chunk_size=8192), b"")
-            ctype = (r.headers.get("Content-Type") or "").lower()
-            if not (first.startswith(b"%PDF") or "application/pdf" in ctype):
-                r.close()
-                return None
-            with open(pdf_path, "wb") as f:
-                if first:
-                    f.write(first)
-                for chunk in r.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-            return pdf_path
-        except requests.exceptions.RequestException:
-            return None
+    # Uses common Source.download_pdf via orchestrator.
 
 """
 CoreSource module defines the CORE provider. No direct CLI harness.

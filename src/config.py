@@ -67,4 +67,4 @@ LLM_MAX_TOKENS: int = getenv_int("RS_LLM_MAX_TOKENS", 256)
 
 # Expose other knobs for central access (optional)
 CORE_API_KEY: Optional[str] = _getenv("CORE_API_KEY")
-RESET_ON_START: bool = getenv_bool("RS_RESET_ON_START", False)
+# Reset-on-start removed; use GUI button for manual reset

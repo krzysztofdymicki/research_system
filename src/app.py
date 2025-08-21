@@ -23,7 +23,6 @@ class App(tk.Tk):
         self.geometry("640x480")
 
         self.root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-        self._maybe_reset_on_start()
 
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill=tk.BOTH, expand=True)
@@ -45,21 +44,43 @@ class App(tk.Tk):
         ttk.Checkbutton(frm, text="Use arXiv", variable=self.use_arxiv).grid(row=2, column=0, sticky=tk.W)
         ttk.Checkbutton(frm, text="Use CORE", variable=self.use_core).grid(row=2, column=1, sticky=tk.W)
 
+        # arXiv scope: Title / Abstract (at least one when arXiv enabled)
+        ttk.Label(frm, text="arXiv fields:").grid(row=3, column=0, sticky=tk.W, pady=(6, 0))
+        self.arxiv_in_title = tk.BooleanVar(value=True)
+        self.arxiv_in_abstract = tk.BooleanVar(value=False)
+        ttk.Checkbutton(frm, text="Title", variable=self.arxiv_in_title).grid(row=3, column=1, sticky=tk.W, pady=(6, 0))
+        ttk.Checkbutton(frm, text="Abstract", variable=self.arxiv_in_abstract).grid(row=3, column=2, sticky=tk.W, pady=(6, 0))
+
         # Search runs metadata-only; downloads happen later for kept
         self.run_btn = ttk.Button(frm, text="Run Search", command=self.on_run)
-        self.run_btn.grid(row=3, column=0, pady=10, sticky=tk.W)
+        self.run_btn.grid(row=4, column=0, pady=10, sticky=tk.W)
 
         self.status_var = tk.StringVar(value="Idle")
-        ttk.Label(frm, textvariable=self.status_var).grid(row=4, column=0, columnspan=4, sticky=tk.W)
+        ttk.Label(frm, textvariable=self.status_var).grid(row=5, column=0, columnspan=4, sticky=tk.W)
 
-        ttk.Separator(frm).grid(row=5, column=0, columnspan=4, sticky="ew", pady=(8, 4))
-        ttk.Label(frm, text="Reset:").grid(row=6, column=0, sticky=tk.W)
-        ttk.Button(frm, text="Reset DB + papers now", command=self.on_reset_now).grid(row=6, column=1, sticky=tk.W)
-        self.reset_on_start_var = tk.BooleanVar(value=self._is_reset_marker_present())
-        ttk.Checkbutton(frm, text="Reset on next start", variable=self.reset_on_start_var, command=self.on_toggle_reset_on_start).grid(row=6, column=2, sticky=tk.W)
+        # Live query preview
+        ttk.Separator(frm).grid(row=6, column=0, columnspan=4, sticky="ew", pady=(8, 4))
+        ttk.Label(frm, text="Effective arXiv query:").grid(row=7, column=0, sticky=tk.W)
+        self.arxiv_preview_var = tk.StringVar(value="")
+        ttk.Label(frm, textvariable=self.arxiv_preview_var, wraplength=520).grid(row=7, column=1, columnspan=3, sticky=tk.W)
+        ttk.Label(frm, text="Effective CORE query:").grid(row=8, column=0, sticky=tk.W)
+        self.core_preview_var = tk.StringVar(value="")
+        ttk.Label(frm, textvariable=self.core_preview_var, wraplength=520).grid(row=8, column=1, columnspan=3, sticky=tk.W)
+
+        ttk.Separator(frm).grid(row=9, column=0, columnspan=4, sticky="ew", pady=(8, 4))
+        ttk.Label(frm, text="Reset:").grid(row=10, column=0, sticky=tk.W)
+        ttk.Button(frm, text="Reset DB + papers now", command=self.on_reset_now).grid(row=10, column=1, sticky=tk.W)
 
         for i in range(4):
             frm.columnconfigure(i, weight=1)
+
+        # Bind preview updates
+        self.query_var.trace_add('write', lambda *_: self.update_query_preview())
+        self.use_arxiv.trace_add('write', lambda *_: self.update_query_preview())
+        self.use_core.trace_add('write', lambda *_: self.update_query_preview())
+        self.arxiv_in_title.trace_add('write', lambda *_: self.update_query_preview())
+        self.arxiv_in_abstract.trace_add('write', lambda *_: self.update_query_preview())
+        self.update_query_preview()
 
         # Search Results tab
         res = ttk.Frame(self.notebook, padding=10)
@@ -87,6 +108,9 @@ class App(tk.Tk):
         # Analysis controls
         ctrl = ttk.Frame(res)
         ctrl.grid(row=1, column=0, sticky="ew")
+        ttk.Label(ctrl, text="Research title:").pack(side=tk.LEFT)
+        self.research_title_var = tk.StringVar(value="")
+        ttk.Entry(ctrl, textvariable=self.research_title_var, width=36).pack(side=tk.LEFT, padx=(4, 12))
         ttk.Label(ctrl, text="AI threshold:").pack(side=tk.LEFT)
         self.threshold_var = tk.IntVar(value=70)
         ttk.Spinbox(ctrl, from_=0, to=100, textvariable=self.threshold_var, width=5).pack(side=tk.LEFT, padx=(4, 10))
@@ -146,12 +170,18 @@ class App(tk.Tk):
         if not query:
             messagebox.showwarning("Validation", "Please enter a query.")
             return
+        # Validate arXiv field selection
+        if self.use_arxiv.get() and not (self.arxiv_in_title.get() or self.arxiv_in_abstract.get()):
+            messagebox.showwarning("Validation", "For arXiv, select at least one field: Title or Abstract.")
+            return
 
         opts = SearchOptions(
             query=query,
             max_results=self.max_var.get(),
             use_arxiv=self.use_arxiv.get(),
             use_core=self.use_core.get(),
+            arxiv_in_title=self.arxiv_in_title.get(),
+            arxiv_in_abstract=self.arxiv_in_abstract.get(),
             download_pdfs=False,
             extract_markdown=False,
         )
@@ -170,6 +200,30 @@ class App(tk.Tk):
                 self.refresh_results()
 
         threading.Thread(target=work, daemon=True).start()
+
+    def update_query_preview(self):
+        try:
+            from .sources.arxiv_source import ArxivSource
+            q = self.query_var.get() or ""
+            # arXiv preview only if enabled
+            if self.use_arxiv.get():
+                self.arxiv_preview_var.set(
+                    ArxivSource.build_arxiv_query(
+                        q,
+                        in_title=self.arxiv_in_title.get(),
+                        in_abstract=self.arxiv_in_abstract.get(),
+                    )
+                )
+            else:
+                self.arxiv_preview_var.set("(arXiv disabled)")
+            # CORE preview: quotes stripped
+            if self.use_core.get():
+                self.core_preview_var.set(q.replace('"', '').replace("'", ''))
+            else:
+                self.core_preview_var.set("(CORE disabled)")
+        except Exception:
+            # Keep UI resilient even if import fails
+            pass
 
     def refresh_results(self):
         conn = init_db()
@@ -233,7 +287,13 @@ class App(tk.Tk):
 
         def work():
             try:
-                analyzed, kept = analyze_with_progress(None, threshold, cancel_flag, progress_cb)
+                analyzed, kept = analyze_with_progress(
+                    None,
+                    threshold,
+                    cancel_flag,
+                    progress_cb,
+                    self.research_title_var.get().strip() or None,
+                )
                 self.status_var.set(f"AI analyzed {analyzed}, >= {threshold}: {kept}.")
             except Exception as e:
                 messagebox.showerror("AI Error", str(e))
@@ -313,47 +373,13 @@ class App(tk.Tk):
                 except Exception:
                     pass
 
-    def _reset_marker_path(self) -> str:
-        return os.path.join(self.root_dir, ".reset_on_start")
-
-    def _is_reset_marker_present(self) -> bool:
-        return os.path.exists(self._reset_marker_path())
-
-    def _maybe_reset_on_start(self):
-        env_flag = os.environ.get("RS_RESET_ON_START", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
-        marker = os.path.exists(os.path.join(self.root_dir, ".reset_on_start"))
-        if env_flag or marker:
-            self._reset_database_and_papers()
-            if marker:
-                try:
-                    os.remove(self._reset_marker_path())
-                except Exception:
-                    pass
-            try:
-                messagebox.showinfo("Reset", "Database and papers directory have been reset.")
-            except Exception:
-                pass
 
     def on_reset_now(self):
         if messagebox.askyesno("Confirm Reset", "This will delete research.db and all files in papers/. Continue?"):
             self._reset_database_and_papers()
             self.status_var.set("Reset completed.")
             self.refresh_results()
-
-    def on_toggle_reset_on_start(self):
-        path = self._reset_marker_path()
-        if self.reset_on_start_var.get():
-            try:
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write("reset")
-            except Exception:
-                messagebox.showerror("Error", "Could not set reset-on-start marker.")
-        else:
-            try:
-                if os.path.exists(path):
-                    os.remove(path)
-            except Exception:
-                messagebox.showerror("Error", "Could not remove reset-on-start marker.")
+            self.refresh_publications()
 
 
 if __name__ == "__main__":

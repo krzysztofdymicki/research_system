@@ -1,5 +1,5 @@
 import arxiv
-from typing import List, Optional
+from typing import List
 import os
 import requests
 
@@ -12,8 +12,68 @@ class ArxivSource(Source):
     A source for fetching publications from arXiv.
     """
 
-    def __init__(self):
+    def __init__(self, in_title: bool = True, in_abstract: bool = False):
         super().__init__("arXiv")
+        # At least one should be True at call sites; default keeps prior behavior
+        self.in_title = bool(in_title)
+        self.in_abstract = bool(in_abstract)
+
+    @staticmethod
+    def build_arxiv_query(query: str, in_title: bool = True, in_abstract: bool = False) -> str:
+        q = (query or "").strip()
+        if any(prefix in q for prefix in ["ti:", "au:", "abs:", "all:", "cat:"]):
+            return q
+        # Extract quoted phrases first
+        phrases: List[str] = []
+        cur = []
+        in_q = False
+        qch = ''
+        for ch in q:
+            if ch in ('"', "'"):
+                if not in_q:
+                    in_q = True
+                    qch = ch
+                    cur = []
+                elif ch == qch:
+                    in_q = False
+                    phrase = ''.join(cur).strip()
+                    if phrase:
+                        phrases.append(phrase)
+                    cur = []
+                else:
+                    cur.append(ch)
+            else:
+                if in_q:
+                    cur.append(ch)
+        def _fields_clause(val: str) -> str:
+            clauses = []
+            if in_title:
+                clauses.append(f'ti:"{val}"')
+            if in_abstract:
+                clauses.append(f'abs:"{val}"')
+            if len(clauses) == 1:
+                return clauses[0]
+            return "(" + " OR ".join(clauses) + ")"
+
+        if phrases:
+            parts = [_fields_clause(p) for p in phrases]
+            return " AND ".join(parts)
+        # Fallback: tokenize words and AND by title
+        tokens = [t for t in q.split() if t]
+        if in_title or in_abstract:
+            def _fields_token(tok: str) -> str:
+                clauses = []
+                if in_title:
+                    clauses.append(f'ti:{tok}')
+                if in_abstract:
+                    clauses.append(f'abs:{tok}')
+                if len(clauses) == 1:
+                    return clauses[0]
+                return "(" + " OR ".join(clauses) + ")"
+            parts = [_fields_token(t) for t in tokens]
+        else:
+            parts = [f'ti:{t}' for t in tokens]
+        return " AND ".join(parts) if parts else q
 
     def search(self, query: str, max_results: int = 10) -> List[Publication]:
         """
@@ -26,8 +86,11 @@ class ArxivSource(Source):
         Returns:
             List[Publication]: A list of Publication objects matching the query.
         """
+        # Build arXiv API query according to rules
+        arxiv_query = ArxivSource.build_arxiv_query(query, in_title=self.in_title, in_abstract=self.in_abstract)
+
         search_query = arxiv.Search(
-            query=query,
+            query=arxiv_query,
             max_results=max_results,
             sort_by=arxiv.SortCriterion.SubmittedDate
         )
@@ -48,50 +111,7 @@ class ArxivSource(Source):
             publications.append(pub)
         return publications
 
-    def download_pdf(self, pub: Publication, download_dir: str = "papers") -> Optional[str]:
-        if not os.path.exists(download_dir):
-            os.makedirs(download_dir, exist_ok=True)
-
-        # Build a direct arXiv PDF URL
-        pdf_url = pub.pdf_url
-        if not pdf_url and pub.url and "arxiv.org/abs/" in pub.url:
-            pdf_url = pub.url.replace("/abs/", "/pdf/")
-            if not pdf_url.endswith(".pdf"):
-                pdf_url += ".pdf"
-        if not pdf_url:
-            return None
-
-        file_id = pub.original_id or "arxiv"
-        pdf_filename = f"{file_id.replace('/', '_').replace(':', '_')}.pdf"
-        pdf_path = os.path.join(download_dir, pdf_filename)
-        if os.path.exists(pdf_path):
-            try:
-                with open(pdf_path, "rb") as fh:
-                    if fh.read(5).startswith(b"%PDF"):
-                        return pdf_path
-            except Exception:
-                pass
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
-        }
-        try:
-            r = requests.get(pdf_url, stream=True, allow_redirects=True, headers=headers, timeout=60)
-            r.raise_for_status()
-            first = next(r.iter_content(chunk_size=8192), b"")
-            ctype = (r.headers.get("Content-Type") or "").lower()
-            if not (first.startswith(b"%PDF") or "application/pdf" in ctype):
-                r.close()
-                return None
-            with open(pdf_path, "wb") as f:
-                if first:
-                    f.write(first)
-                for chunk in r.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-            return pdf_path
-        except requests.exceptions.RequestException:
-            return None
+    # Uses common Source.download_pdf via orchestrator.
 """
 ArxivSource module defines the arXiv provider. No direct CLI harness.
 Use the GUI or orchestrator in application flows.

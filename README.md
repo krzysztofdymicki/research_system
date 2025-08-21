@@ -29,7 +29,7 @@ Environment variables (optional but recommended):
 - `RS_LLM_MODEL`: default `google/gemma-3-12b`
 - `RS_LLM_TEMPERATURE`: default `0.2`
 - `RS_LLM_MAX_TOKENS`: default `256`
-- `RS_RESET_ON_START`: `1|true|yes` to reset DB and `papers/` at next GUI start
+  
 - `RS_SALVAGE_HEAD_TIMEOUT`: default `20`; `RS_SALVAGE_GET_TIMEOUT`: `60`; `RS_SALVAGE_MAX_CANDIDATES`: `5`
 
 Quick set in PowerShell:

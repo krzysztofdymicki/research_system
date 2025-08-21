@@ -62,11 +62,11 @@ class LMStudioClient:
 
     def score_relevance(self, query: str, title: str, abstract: Optional[str]) -> Dict[str, Any]:
         prompt = (
-            "You are an assistant that evaluates how relevant a paper is to a search query. "
+            "You are an assistant that evaluates how relevant a paper is to a target research title. "
             "Return strictly a JSON object with keys: score (0-100 integer), kept (true/false), "
             "label (one of: 'keep','maybe','discard'), and rationale (short string). "
             "Be conservative: only 'keep' if clearly relevant.\n\n"
-            f"Query: {query}\nTitle: {title}\nAbstract: {abstract or ''}\n\n"
+            f"Research title: {query}\nPaper title: {title}\nAbstract: {abstract or ''}\n\n"
             "Respond with only JSON, no extra text."
         )
 

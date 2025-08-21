@@ -4,7 +4,7 @@ import uuid
 
 from .sources.arxiv_source import ArxivSource
 from .sources.core_source import CoreSource
-from .sources.source import extract_text_from_pdf
+from .sources.source import extract_text_from_pdf, download_pdf_for_publication
 from .db import (
     init_db,
     insert_search,
@@ -25,6 +25,8 @@ class SearchOptions:
     max_results: int = 5
     use_arxiv: bool = True
     use_core: bool = True
+    arxiv_in_title: bool = True
+    arxiv_in_abstract: bool = False
     download_pdfs: bool = True
     extract_markdown: bool = True
 
@@ -35,7 +37,7 @@ def run_search_and_save(opts: SearchOptions) -> Tuple[int, int]:
     providers = []
     sources_used: List[str] = []
     if opts.use_arxiv:
-        providers.append(ArxivSource())
+        providers.append(ArxivSource(in_title=opts.arxiv_in_title, in_abstract=opts.arxiv_in_abstract))
         sources_used.append("arXiv")
     if opts.use_core:
         providers.append(CoreSource())
@@ -148,6 +150,7 @@ def analyze_with_progress(
     threshold: int = 70,
     cancel_flag: Optional[Callable[[], bool]] = None,
     progress_cb: Optional[Callable[[int, int, int], None]] = None,
+    research_title: Optional[str] = None,
 ) -> Tuple[int, int]:
     """Analyze pending items with optional cancellation and progress callback.
 
@@ -174,7 +177,7 @@ def analyze_with_progress(
             break
         title = r.get("title") or ""
         abstract = r.get("abstract") or ""
-        row_query = r.get("query") or ""
+        row_query = research_title or (r.get("query") or "")
         try:
             res = client.score_relevance(row_query, title, abstract)
             score = int(res.get("score") or 0)
@@ -248,13 +251,7 @@ def download_pdfs_for_publications() -> Tuple[int, int]:
         pub = _row_to_publication(r)
         attempted += 1
         try:
-            src = (r.get("source") or "").lower()
-            if src == "arxiv":
-                pdf_path = ArxivSource().download_pdf(pub)
-            elif src == "core":
-                pdf_path = CoreSource().download_pdf(pub)
-            else:
-                pdf_path = None
+            pdf_path = download_pdf_for_publication(pub)
             if pdf_path:
                 update_publication_assets(conn, publication_id=r["id"], pdf_path=pdf_path)
                 downloaded += 1
