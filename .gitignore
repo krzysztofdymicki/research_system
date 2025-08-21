@@ -26,6 +26,7 @@ dist/
 
 # Downloaded PDFs
 papers/
+papers_21-08-2025/
 
 # Pip files
 .pip/
@@ -38,3 +39,6 @@ pip-wheel-metadata/
 
 # Environment variables
 .env
+
+# Database files
+*.db
