@@ -1,75 +1,113 @@
 # Research System
 
-AI-assisted workflow for discovering academic papers from arXiv and CORE, saving metadata to SQLite, downloading PDFs reliably (with landing-page salvage), extracting Markdown from PDFs, and scoring relevance with a local LLM (LM Studio friendly). Comes with a simple Tkinter GUI.
+A tool for searching academic papers from arXiv and CORE, with basic AI relevance scoring.
 
 ## Features
 
-- Search providers: arXiv, CORE (v3 API)
-- Reliable PDF downloads with salvage from landing pages
-- PDF → Markdown via `pymupdf4llm`
-- SQLite persistence: three-stage model — `searches` → `raw_search_results` → `publications`
-- LLM relevance scoring (title+abstract vs the per-row original query) on pending raw results
-- GUI: search, auto-refresh to “Search Results”, analyze pending, promote to Publications; Publications tab for download/extract; reset controls
-  
+- Search papers from arXiv and CORE APIs
+- Filter results using Gemini AI (relevance score 0-100)
+- Download PDFs and extract text
+- Simple GUI interface (Tkinter)
 
-## Install
+## Installation
 
-```powershell
-pip install -e .
+1. Clone the repository
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
 ```
 
-Python 3.8+ required.
-
-## Configure
-
-Environment variables (optional but recommended):
-
-- `CORE_API_KEY`: token for CORE v3 API
-- `RS_LLM_ENDPOINT`: OpenAI-compatible chat completions endpoint (default `http://localhost:1234/v1/chat/completions`)
-- `RS_LLM_MODEL`: default `google/gemma-3-12b`
-- `RS_LLM_TEMPERATURE`: default `0.2`
-- `RS_LLM_MAX_TOKENS`: default `256`
-  
-- `RS_SALVAGE_HEAD_TIMEOUT`: default `20`; `RS_SALVAGE_GET_TIMEOUT`: `60`; `RS_SALVAGE_MAX_CANDIDATES`: `5`
-
-Quick set in PowerShell:
-
-```powershell
-$env:CORE_API_KEY = 'your_core_api_key'
-$env:RS_LLM_ENDPOINT = 'http://localhost:1234/v1/chat/completions'
-$env:RS_LLM_MODEL = 'google/gemma-3-12b'
+3. Set up your API keys in `.env`:
+```
+GEMINI_API_KEY=your_gemini_api_key_here
+CORE_API_KEY=your_core_api_key_here  # Optional
 ```
 
-## Run
+## Usage
 
-GUI:
-
-```powershell
+```bash
 python -m src.app
 ```
 
-Note: Source modules no longer include ad-hoc self-tests.
+## Project Structure
 
-## How It Works
+```
+research_system/
+├── src/
+│   ├── app.py              # GUI (Tkinter)
+│   ├── orchestrator.py     # Main workflow
+│   ├── db.py               # SQLite operations
+│   ├── models.py           # Data models
+│   ├── sources/
+│   │   ├── source.py       # Base source class
+│   │   ├── arxiv_source.py # arXiv API
+│   │   └── core_source.py  # CORE API
+│   └── ai/
+│       └── gemini_analyzer.py  # Gemini AI scoring
+├── papers/                 # Downloaded PDFs (created automatically)
+├── research.db            # SQLite database (created automatically)
+├── requirements.txt       # Dependencies
+├── .env.example          # Example environment variables
+└── README.md            # This file
+```
 
-1. Search creates a record in `searches` and stores each provider hit in `raw_search_results`.
-2. LLM analysis compares each row’s title+abstract against its original query and writes only `relevance_score` to `raw_search_results`.
-3. You can “Promote to Publications” (threshold-based), moving accepted items into `publications`.
-4. Publications tab lets you download PDFs and extract Markdown for promoted items only.
+## Database
 
-## Notes & Tips
+SQLite with two tables:
+- **raw_results**: Search results with AI scores
+- **publications**: Papers marked for keeping
 
-- CORE requires a valid `CORE_API_KEY`.
-- LLM integration is HTTP-only; LM Studio must be running a compatible server at `RS_LLM_ENDPOINT`.
-- The LLM response is parsed robustly from JSON or fenced code blocks; analysis JSON is stored in `raw_search_results.analysis_json`.
-- Use the GUI “Reset DB + papers now” or set `RS_RESET_ON_START` before launching to fully reset state.
+## Configuration
 
-## Modules
+### Search Options
+- `query`: Search string
+- `max_results`: Results per source (1-50)
+- `use_arxiv`: Enable/disable arXiv
+- `use_core`: Enable/disable CORE
+- `arxiv_in_title`: Search in titles
+- `arxiv_in_abstract`: Search in abstracts
 
-- `src/sources/arxiv_source.py`, `src/sources/core_source.py`, `src/sources/source.py`
-- `src/orchestrator.py`, `src/llm.py`, `src/db.py`, `src/models.py`
-- `src/app.py`
+### AI Analysis
+- `threshold`: Minimum score to keep (0-100)
+- `research_title`: Optional context for scoring
+
+## Requirements
+
+- Python 3.8+
+- Gemini API key (required)
+- CORE API key (optional)
+- Internet connection
 
 ## License
 
-Proprietary/internal by default. Do not redistribute without permission.
+MIT
+### AI Analysis
+- `threshold`: Minimum score to keep (0-100)
+- `research_title`: Optional context for scoring
+
+## Requirements
+
+- Python 3.8+
+- Gemini API key (required)
+- CORE API key (optional)
+- Internet connection
+
+## License
+
+MIT
+- `arxiv_in_abstract`: Search in abstracts (arXiv)
+
+### AI Analysis
+- `threshold`: Minimum relevance score (0-100) to keep papers
+- `research_title`: Optional context for better relevance scoring
+
+## Requirements
+
+- Python 3.8+
+- Google Gemini API key (required)
+- CORE API key (optional, for higher rate limits)
+- Internet connection for API access
+
+## License
+
+MIT
