@@ -9,4 +9,5 @@ dependencies = [
     "requests",
     "pymupdf4llm",
     "python-dotenv",
+        "langextract",
 ]
