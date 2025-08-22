@@ -36,6 +36,7 @@ pip-wheel-metadata/
 .pytest_cache/
 .coverage
 *.log
+debug
 
 # Environment variables
 .env

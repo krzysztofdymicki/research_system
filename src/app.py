@@ -4,6 +4,8 @@ import threading
 import os
 import shutil
 from pathlib import Path
+import json
+import time
 
 from .orchestrator import (
     SearchOptions,
@@ -12,6 +14,8 @@ from .orchestrator import (
     promote_kept,
 )
 from .db import init_db, list_raw_results, list_publications, reset_db, update_publication_assets
+from .db import update_publication_extractions
+from .extractors.langextract_adapter import extract_from_publication
 from .models import Publication
 from .sources.source import download_pdf_for_publication, extract_text_from_pdf
 
@@ -140,10 +144,16 @@ class App(tk.Tk):
         self.download_btn.grid(row=0, column=0, sticky=tk.W)
         self.extract_btn = ttk.Button(pubs, text="Extract Markdown", command=self.on_extract_pubs)
         self.extract_btn.grid(row=0, column=1, sticky=tk.W, padx=6)
+        self.nlp_btn = ttk.Button(pubs, text="Run NLP Extractions", command=self.on_run_extractions)
+        self.nlp_btn.grid(row=0, column=2, sticky=tk.W, padx=6)
+        self.view_btn = ttk.Button(pubs, text="View Extractions JSON", command=self.on_view_extractions)
+        self.view_btn.grid(row=0, column=3, sticky=tk.W, padx=6)
+        self.nlp_all_btn = ttk.Button(pubs, text="Extract All", command=self.on_run_extractions_all)
+        self.nlp_all_btn.grid(row=0, column=4, sticky=tk.W, padx=6)
 
         self.pubs_tree = ttk.Treeview(
             pubs,
-            columns=("title", "source", "pdf", "md"),
+            columns=("title", "source", "pdf", "md", "nlp"),
             show="headings",
             height=12,
         )
@@ -151,16 +161,20 @@ class App(tk.Tk):
         self.pubs_tree.heading("source", text="Source")
         self.pubs_tree.heading("pdf", text="PDF")
         self.pubs_tree.heading("md", text="Markdown")
+        self.pubs_tree.heading("nlp", text="Extractions")
         self.pubs_tree.column("title", width=420)
         self.pubs_tree.column("source", width=80)
         self.pubs_tree.column("pdf", width=120)
         self.pubs_tree.column("md", width=100)
-        self.pubs_tree.grid(row=1, column=0, columnspan=3, sticky="nsew", pady=(8, 8))
+        self.pubs_tree.column("nlp", width=100)
+        self.pubs_tree.grid(row=1, column=0, columnspan=5, sticky="nsew", pady=(8, 8))
 
         pubs.rowconfigure(1, weight=1)
         pubs.columnconfigure(0, weight=1)
         pubs.columnconfigure(1, weight=0)
         pubs.columnconfigure(2, weight=0)
+        pubs.columnconfigure(3, weight=0)
+        pubs.columnconfigure(4, weight=0)
 
         # Initial loads
         self._rows_by_id = {}
@@ -430,7 +444,145 @@ class App(tk.Tk):
         for r in rows:
             pdf = "yes" if r.get("pdf_path") else "no"
             md = "yes" if r.get("markdown") else "no"
-            self.pubs_tree.insert("", tk.END, iid=str(r["id"]), values=(r["title"], r["source"], pdf, md))
+            nlp = "yes" if r.get("extractions_json") else "no"
+            self.pubs_tree.insert("", tk.END, iid=str(r["id"]), values=(r["title"], r["source"], pdf, md, nlp))
+
+    def _get_selected_publication_id(self) -> str | None:
+        sel = self.pubs_tree.selection()
+        if not sel:
+            return None
+        return str(sel[0])
+
+    def on_run_extractions(self):
+        pub_id = self._get_selected_publication_id()
+        if not pub_id:
+            messagebox.showwarning("Run Extractions", "Please select a publication in the table.")
+            return
+        self.status_var.set("Running NLP extractions...")
+        self.download_btn.config(state=tk.DISABLED)
+        self.extract_btn.config(state=tk.DISABLED)
+        self.nlp_btn.config(state=tk.DISABLED)
+        self.view_btn.config(state=tk.DISABLED)
+
+        def work():
+            try:
+                res = extract_from_publication(pub_id)
+                js = json.dumps(res, ensure_ascii=False)
+                # Save results into DB only when ok
+                if res.get("ok"):
+                    try:
+                        conn = init_db()
+                        update_publication_extractions(conn, publication_id=pub_id, extractions_json=js)
+                    except Exception:
+                        pass
+                if not res.get("ok"):
+                    err = str(res.get("error") or "Unknown LLM error")
+                    self.after(0, lambda e_msg=err: messagebox.showerror("NLP Error", e_msg))
+                else:
+                    self.after(0, lambda: self.status_var.set("Extractions saved."))
+            except Exception as e:
+                e_msg = str(e)
+                self.after(0, lambda em=e_msg: messagebox.showerror("NLP Error", em))
+            finally:
+                self.after(0, self.refresh_publications)
+                self.after(0, lambda: self.download_btn.config(state=tk.NORMAL))
+                self.after(0, lambda: self.extract_btn.config(state=tk.NORMAL))
+                self.after(0, lambda: self.nlp_btn.config(state=tk.NORMAL))
+                self.after(0, lambda: self.view_btn.config(state=tk.NORMAL))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_run_extractions_all(self):
+        # Disable controls
+        self.download_btn.config(state=tk.DISABLED)
+        self.extract_btn.config(state=tk.DISABLED)
+        self.nlp_btn.config(state=tk.DISABLED)
+        self.view_btn.config(state=tk.DISABLED)
+        self.nlp_all_btn.config(state=tk.DISABLED)
+
+        def work():
+            try:
+                conn = init_db()
+                pubs = list_publications(conn, limit=100000)
+                to_process = [p for p in pubs if p.get("markdown") and not p.get("extractions_json")]
+                total = len(to_process)
+                done = 0
+                if total == 0:
+                    self.after(0, lambda: messagebox.showinfo("Extract All", "Nothing to do. Ensure markdown exists and no extractions saved."))
+                for idx, pub in enumerate(to_process, 1):
+                    try:
+                        self.after(0, lambda i=idx, t=total: self.status_var.set(f"Running NLP extractions {i}/{t}..."))
+                        pid = str(pub["id"])
+                        res = extract_from_publication(pid)
+                        if res.get("ok"):
+                            js = json.dumps(res, ensure_ascii=False)
+                            try:
+                                conn2 = init_db()
+                                update_publication_extractions(conn2, publication_id=pid, extractions_json=js)
+                            except Exception:
+                                pass
+                            done += 1
+                        # refresh UI row
+                        self.after(0, self.refresh_publications)
+                        # small pause to keep UI responsive
+                        time.sleep(0.05)
+                    except Exception:
+                        # continue with next
+                        pass
+                self.after(0, lambda d=done, t=total: self.status_var.set(f"NLP extractions complete: {d}/{t} saved."))
+            except Exception as e:
+                self.after(0, lambda: messagebox.showerror("Extract All Error", str(e)))
+            finally:
+                # Re-enable controls
+                self.after(0, lambda: self.download_btn.config(state=tk.NORMAL))
+                self.after(0, lambda: self.extract_btn.config(state=tk.NORMAL))
+                self.after(0, lambda: self.nlp_btn.config(state=tk.NORMAL))
+                self.after(0, lambda: self.view_btn.config(state=tk.NORMAL))
+                self.after(0, lambda: self.nlp_all_btn.config(state=tk.NORMAL))
+                self.after(0, self.refresh_publications)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_view_extractions(self):
+        pub_id = self._get_selected_publication_id()
+        if not pub_id:
+            messagebox.showwarning("View Extractions", "Please select a publication in the table.")
+            return
+        conn = init_db()
+        rows = list_publications(conn, limit=100000)
+        row = next((r for r in rows if str(r["id"]) == pub_id), None)
+        if not row or not row.get("extractions_json"):
+            messagebox.showinfo("View Extractions", "No extractions saved for this publication yet.")
+            return
+        try:
+            parsed = json.loads(row["extractions_json"])  # type: ignore[arg-type]
+            pretty = json.dumps(parsed, ensure_ascii=False, indent=2)
+            self._open_json_viewer("Extractions JSON", pretty)
+        except Exception:
+            self._open_json_viewer("Extractions JSON", row.get("extractions_json") or "")
+
+    # Removed debug markdown viewer per request
+
+    def _open_json_viewer(self, title: str, text: str):
+        top = tk.Toplevel(self)
+        top.title(title)
+        top.geometry("760x560")
+        container = ttk.Frame(top, padding=6)
+        container.pack(fill=tk.BOTH, expand=True)
+
+        txt = tk.Text(container, wrap=tk.NONE)
+        vsb = ttk.Scrollbar(container, orient=tk.VERTICAL, command=txt.yview)
+        hsb = ttk.Scrollbar(container, orient=tk.HORIZONTAL, command=txt.xview)
+        txt.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        txt.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+        container.rowconfigure(0, weight=1)
+        container.columnconfigure(0, weight=1)
+
+        txt.insert("1.0", text or "")
+        txt.focus_set()
 
     # Reset helpers
     def _reset_database_and_papers(self):

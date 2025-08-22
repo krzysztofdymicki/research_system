@@ -67,6 +67,7 @@ def init_db(db_path: str = "research.db") -> sqlite3.Connection:
             source TEXT NOT NULL,
             pdf_path TEXT,
             markdown TEXT,
+            extractions_json TEXT,
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now')),
             UNIQUE(source, original_id),
@@ -74,6 +75,15 @@ def init_db(db_path: str = "research.db") -> sqlite3.Connection:
         )
         """
     )
+    # Backward-compatible: add extractions_json if it doesn't exist
+    try:
+        cur = conn.execute("PRAGMA table_info(publications)")
+        cols = [r[1] for r in cur.fetchall()]
+        if "extractions_json" not in cols:
+            conn.execute("ALTER TABLE publications ADD COLUMN extractions_json TEXT")
+            conn.commit()
+    except Exception:
+        pass
     return conn
 
 
@@ -255,7 +265,7 @@ def list_raw_results(
 def list_publications(conn: sqlite3.Connection, limit: int = 500) -> List[Dict[str, Any]]:
     cur = conn.execute(
         """
-        SELECT id, search_result_id, original_id, title, authors_json, url, pdf_url, abstract, source, pdf_path, markdown, created_at, updated_at
+    SELECT id, search_result_id, original_id, title, authors_json, url, pdf_url, abstract, source, pdf_path, markdown, extractions_json, created_at, updated_at
           FROM publications
          ORDER BY created_at DESC
          LIMIT ?
@@ -293,6 +303,24 @@ def update_publication_assets(
     sql = f"UPDATE publications SET {', '.join(sets)} WHERE id = ?"
     params.append(publication_id)
     conn.execute(sql, params)
+    conn.commit()
+
+
+def update_publication_extractions(
+    conn: sqlite3.Connection,
+    *,
+    publication_id: str,
+    extractions_json: str,
+) -> None:
+    conn.execute(
+        """
+        UPDATE publications
+           SET extractions_json = ?,
+               updated_at = datetime('now')
+         WHERE id = ?
+        """,
+        (extractions_json, publication_id),
+    )
     conn.commit()
 
 
