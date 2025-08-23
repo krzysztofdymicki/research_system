@@ -505,6 +505,7 @@ class App(tk.Tk):
                 conn = init_db()
                 pubs = list_publications(conn, limit=100000)
                 to_process = [p for p in pubs if p.get("markdown") and not p.get("extractions_json")]
+                # cloud-only extraction path
                 total = len(to_process)
                 done = 0
                 if total == 0:

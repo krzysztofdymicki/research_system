@@ -58,11 +58,17 @@ def getenv_int(name: str, default: int) -> int:
         return default
 
 
-# LLM settings (OpenAI-compatible)
+# Provider + LLM settings
+LLM_PROVIDER: str = getenv_str("RS_LLM_PROVIDER", "lmstudio")  # lmstudio | langextract
 LLM_ENDPOINT: str = getenv_str("RS_LLM_ENDPOINT", "http://localhost:1234/v1/chat/completions")
 LLM_MODEL: str = getenv_str("RS_LLM_MODEL", "google/gemma-3-12b")
 LLM_TEMPERATURE: float = getenv_float("RS_LLM_TEMPERATURE", 0.2)
 LLM_MAX_TOKENS: int = getenv_int("RS_LLM_MAX_TOKENS", 256)
+
+# LangExtract / Gemini cloud settings
+GEMINI_MODEL: str = getenv_str("RS_GEMINI_MODEL", "gemini-2.5-flash")
+LANGEXTRACT_API_KEY: Optional[str] = _getenv("LANGEXTRACT_API_KEY") or _getenv("GOOGLE_API_KEY")
+
 
 
 # Expose other knobs for central access (optional)
