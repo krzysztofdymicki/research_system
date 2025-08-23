@@ -7,17 +7,32 @@ from pathlib import Path
 import json
 import time
 
-from .orchestrator import (
-    SearchOptions,
-    run_search_and_save,
-    analyze_with_progress,
-    promote_kept,
-)
-from .db import init_db, list_raw_results, list_publications, reset_db, update_publication_assets
-from .db import update_publication_extractions
-from .extractors.langextract_adapter import extract_from_publication
-from .models import Publication
-from .sources.source import download_pdf_for_publication, extract_text_from_pdf
+try:
+    from .orchestrator import (
+        SearchOptions,
+        run_search_and_save,
+        analyze_with_progress,
+        promote_kept,
+    )
+    from .db import init_db, list_raw_results, list_publications, reset_db, update_publication_assets
+    from .db import update_publication_extractions
+    from .extractors.langextract_adapter import extract_from_publication
+    from .models import Publication
+    from .sources.source import download_pdf_for_publication, extract_text_from_pdf
+except ImportError:
+    import sys as _sys
+    _sys.path.append(os.path.dirname(__file__))
+    from orchestrator import (
+        SearchOptions,
+        run_search_and_save,
+        analyze_with_progress,
+        promote_kept,
+    )
+    from db import init_db, list_raw_results, list_publications, reset_db, update_publication_assets
+    from db import update_publication_extractions
+    from extractors.langextract_adapter import extract_from_publication
+    from models import Publication
+    from sources.source import download_pdf_for_publication, extract_text_from_pdf
 
 
 class App(tk.Tk):
@@ -150,24 +165,28 @@ class App(tk.Tk):
         self.view_btn.grid(row=0, column=3, sticky=tk.W, padx=6)
         self.nlp_all_btn = ttk.Button(pubs, text="Extract All", command=self.on_run_extractions_all)
         self.nlp_all_btn.grid(row=0, column=4, sticky=tk.W, padx=6)
+        self.cfg_btn = ttk.Button(pubs, text="Extraction Config", command=self.on_open_config_editor)
+        self.cfg_btn.grid(row=0, column=5, sticky=tk.W, padx=(16, 0))
 
         self.pubs_tree = ttk.Treeview(
             pubs,
-            columns=("title", "source", "pdf", "md", "nlp"),
+            columns=("title", "source", "score", "pdf", "md", "nlp"),
             show="headings",
             height=12,
         )
         self.pubs_tree.heading("title", text="Title")
         self.pubs_tree.heading("source", text="Source")
+        self.pubs_tree.heading("score", text="Score")
         self.pubs_tree.heading("pdf", text="PDF")
         self.pubs_tree.heading("md", text="Markdown")
         self.pubs_tree.heading("nlp", text="Extractions")
         self.pubs_tree.column("title", width=420)
         self.pubs_tree.column("source", width=80)
+        self.pubs_tree.column("score", width=60, anchor=tk.E)
         self.pubs_tree.column("pdf", width=120)
         self.pubs_tree.column("md", width=100)
         self.pubs_tree.column("nlp", width=100)
-        self.pubs_tree.grid(row=1, column=0, columnspan=5, sticky="nsew", pady=(8, 8))
+        self.pubs_tree.grid(row=1, column=0, columnspan=6, sticky="nsew", pady=(8, 8))
 
         pubs.rowconfigure(1, weight=1)
         pubs.columnconfigure(0, weight=1)
@@ -175,6 +194,7 @@ class App(tk.Tk):
         pubs.columnconfigure(2, weight=0)
         pubs.columnconfigure(3, weight=0)
         pubs.columnconfigure(4, weight=0)
+        pubs.columnconfigure(5, weight=0)
 
         # Initial loads
         self._rows_by_id = {}
@@ -445,7 +465,9 @@ class App(tk.Tk):
             pdf = "yes" if r.get("pdf_path") else "no"
             md = "yes" if r.get("markdown") else "no"
             nlp = "yes" if r.get("extractions_json") else "no"
-            self.pubs_tree.insert("", tk.END, iid=str(r["id"]), values=(r["title"], r["source"], pdf, md, nlp))
+            score = r.get("relevance_score")
+            score_str = "" if score is None else str(int(score)) if isinstance(score, (int, float)) else str(score)
+            self.pubs_tree.insert("", tk.END, iid=str(r["id"]), values=(r["title"], r["source"], score_str, pdf, md, nlp))
 
     def _get_selected_publication_id(self) -> str | None:
         sel = self.pubs_tree.selection()
@@ -584,6 +606,66 @@ class App(tk.Tk):
 
         txt.insert("1.0", text or "")
         txt.focus_set()
+
+    def on_open_config_editor(self):
+        try:
+            from .extraction_config import load_extraction_config, save_extraction_config, get_default_config
+        except Exception as e:
+            messagebox.showerror("Config", f"Cannot load config: {e}")
+            return
+        data = load_extraction_config()
+        pretty = json.dumps(data, ensure_ascii=False, indent=2)
+
+        top = tk.Toplevel(self)
+        top.title("Extraction Config Editor")
+        top.geometry("900x640")
+        container = ttk.Frame(top, padding=6)
+        container.pack(fill=tk.BOTH, expand=True)
+
+        txt = tk.Text(container, wrap=tk.NONE)
+        vsb = ttk.Scrollbar(container, orient=tk.VERTICAL, command=txt.yview)
+        hsb = ttk.Scrollbar(container, orient=tk.HORIZONTAL, command=txt.xview)
+        txt.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        txt.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+        container.rowconfigure(0, weight=1)
+        container.columnconfigure(0, weight=1)
+
+        txt.insert("1.0", pretty)
+
+        btns = ttk.Frame(top)
+        btns.pack(fill=tk.X)
+        def on_save():
+            try:
+                new_text = txt.get("1.0", tk.END)
+                obj = json.loads(new_text)
+                # basic validation of keys
+                if not isinstance(obj, dict):
+                    raise ValueError("Root must be an object")
+                if "prompt" not in obj or not isinstance(obj["prompt"], str):
+                    raise ValueError("Missing 'prompt' (string)")
+                if "allowed_classes" not in obj or not isinstance(obj["allowed_classes"], list):
+                    raise ValueError("Missing 'allowed_classes' (list)")
+                if "examples" not in obj or not isinstance(obj["examples"], list):
+                    raise ValueError("Missing 'examples' (list)")
+                save_extraction_config(obj)
+                messagebox.showinfo("Config", "Configuration saved. It will apply to new extractions.")
+                top.destroy()
+            except Exception as e:
+                messagebox.showerror("Config", f"Invalid JSON or schema: {e}")
+
+        def on_reset():
+            try:
+                save_extraction_config(get_default_config())
+                txt.delete("1.0", tk.END)
+                txt.insert("1.0", json.dumps(get_default_config(), ensure_ascii=False, indent=2))
+            except Exception as e:
+                messagebox.showerror("Config", f"Cannot reset: {e}")
+
+        ttk.Button(btns, text="Save", command=on_save).pack(side=tk.RIGHT, padx=6)
+        ttk.Button(btns, text="Reset to Default", command=on_reset).pack(side=tk.RIGHT)
 
     # Reset helpers
     def _reset_database_and_papers(self):

@@ -265,10 +265,25 @@ def list_raw_results(
 def list_publications(conn: sqlite3.Connection, limit: int = 500) -> List[Dict[str, Any]]:
     cur = conn.execute(
         """
-    SELECT id, search_result_id, original_id, title, authors_json, url, pdf_url, abstract, source, pdf_path, markdown, extractions_json, created_at, updated_at
-          FROM publications
-         ORDER BY created_at DESC
-         LIMIT ?
+    SELECT p.id,
+           p.search_result_id,
+           p.original_id,
+           p.title,
+           p.authors_json,
+           p.url,
+           p.pdf_url,
+           p.abstract,
+           p.source,
+           p.pdf_path,
+           p.markdown,
+           p.extractions_json,
+           p.created_at,
+           p.updated_at,
+           r.relevance_score
+      FROM publications p
+      LEFT JOIN raw_search_results r ON r.id = p.search_result_id
+     ORDER BY p.created_at DESC
+     LIMIT ?
         """,
         (limit,),
     )

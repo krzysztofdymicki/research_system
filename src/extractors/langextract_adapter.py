@@ -7,12 +7,15 @@ from ..config import (
 )
 from ..db import init_db, list_publications, update_publication_extractions
 from pydantic import BaseModel, Field, ValidationError, ConfigDict, field_validator
+from ..extraction_config import load_extraction_config
 
 
-ALLOWED_CLASSES = [
-    "sentiment analysis business application/use case",
-    "sentiment analysis tool/software",
-]
+def _get_allowed_classes() -> List[str]:
+    try:
+        cfg = load_extraction_config()
+        return list(cfg.get("allowed_classes") or [])
+    except Exception:
+        return []
 
 
 class ExtractionItem(BaseModel):
@@ -24,8 +27,9 @@ class ExtractionItem(BaseModel):
     @field_validator("class_")
     @classmethod
     def _check_class(cls, v: str) -> str:
-        if v not in ALLOWED_CLASSES:
-            raise ValueError(f"class must be one of {ALLOWED_CLASSES}")
+        allowed = _get_allowed_classes()
+        if v not in allowed:
+            raise ValueError(f"class must be one of {allowed}")
         return v
 
     @field_validator("text")
@@ -96,28 +100,26 @@ def extract_from_text(text: str, provider_override: Optional[str] = None, includ
     try:
         import langextract as lx  # type: ignore
 
-        prompt = (
-            "Extract only these two classes using exact spans and order of appearance: "
-            "1) sentiment analysis business application/use case, 2) sentiment analysis tool/software. "
-            "Return concise attributes when obvious (e.g., vendor, purpose)."
-        )
-        examples = [
-            lx.data.ExampleData(
-                text="We deployed a sentiment analysis tool in our CRM workflow to flag negative customer feedback.",
-                extractions=[
-                    lx.data.Extraction(
-                        extraction_class="sentiment analysis business application/use case",
-                        extraction_text="flag negative customer feedback",
-                        attributes={"purpose": "customer support triage"},
-                    ),
-                    lx.data.Extraction(
-                        extraction_class="sentiment analysis tool/software",
-                        extraction_text="sentiment analysis tool",
-                        attributes={"vendor": "unknown"},
-                    ),
-                ],
-            )
-        ]
+        cfg = load_extraction_config() or {}
+        prompt = str(cfg.get("prompt") or "")
+        raw_examples = cfg.get("examples") or []
+        # Map raw JSON examples to langextract objects
+        examples = []
+        for ex in raw_examples:
+            try:
+                ex_text = str(ex.get("text") or "")
+                ex_out = []
+                for item in ex.get("extractions") or []:
+                    ex_out.append(
+                        lx.data.Extraction(
+                            extraction_class=str(item.get("extraction_class") or ""),
+                            extraction_text=str(item.get("extraction_text") or ""),
+                            attributes=item.get("attributes") or {},
+                        )
+                    )
+                examples.append(lx.data.ExampleData(text=ex_text, extractions=ex_out))
+            except Exception:
+                continue
         # Cloud (e.g., Gemini) via langextract. Prefer unfenced first, fallback to fenced.
         def _run_cloud(fenced: bool):
             return lx.extract(
@@ -204,7 +206,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             except Exception:
                 pass
         print(js)
-    # no pretty/html output
+        # no pretty/html output
         return 0
     except Exception as e:
         print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
