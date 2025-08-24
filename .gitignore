@@ -43,3 +43,5 @@ debug
 
 # Database files
 *.db
+
+src/make_test_db.py
