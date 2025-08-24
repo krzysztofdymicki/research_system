@@ -1,4 +1,8 @@
 import json
+import logging
+import io
+import sys
+from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
 
 from ..config import (
@@ -8,6 +12,34 @@ from ..config import (
 from ..db import init_db, list_publications, update_publication_extractions
 from pydantic import BaseModel, Field, ValidationError, ConfigDict, field_validator
 from ..extraction_config import load_extraction_config
+@contextmanager
+def _suppress_stdout_stderr():
+    saved_out, saved_err = sys.stdout, sys.stderr
+    try:
+        sys.stdout = io.StringIO()
+        sys.stderr = io.StringIO()
+        yield
+    finally:
+        sys.stdout = saved_out
+        sys.stderr = saved_err
+
+
+def _quiet_loggers():
+    names = [
+        "langextract",
+        "httpx",
+        "httpcore",
+        "urllib3",
+        "openai",
+        "google",
+        "grpc",
+        "absl",
+        "tenacity",
+        "pydantic",
+    ]
+    for n in names:
+        logging.getLogger(n).setLevel(logging.WARNING)
+
 
 
 def _get_allowed_classes() -> List[str]:
@@ -132,13 +164,25 @@ def extract_from_text(text: str, provider_override: Optional[str] = None, includ
                 use_schema_constraints=True,
             )
 
+        # Quiet noisy logs/prints if not debugging
+        if not include_debug:
+            _quiet_loggers()
+
         try:
-            result = _run_cloud(False)
+            if include_debug:
+                result = _run_cloud(False)
+            else:
+                with _suppress_stdout_stderr():
+                    result = _run_cloud(False)
         except Exception as e:
             msg = str(e).lower()
             # If unfenced fails for parsing/marker reasons, try fenced
             if "marker" in msg or "fence" in msg or "parse" in msg:
-                result = _run_cloud(True)
+                if include_debug:
+                    result = _run_cloud(True)
+                else:
+                    with _suppress_stdout_stderr():
+                        result = _run_cloud(True)
             else:
                 raise
 

@@ -10,4 +10,8 @@ dependencies = [
     "pymupdf4llm",
     "python-dotenv",
     "langextract",
+    "bertopic",
+    "scikit-learn",
+    "umap-learn",
+    "hdbscan",
 ]

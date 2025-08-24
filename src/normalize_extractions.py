@@ -268,5 +268,6 @@ def main():
         print(json.dumps({"export_csv_publication": path, "rows": len(grouped)}, ensure_ascii=False))
 
 
+
 if __name__ == "__main__":
     main()
