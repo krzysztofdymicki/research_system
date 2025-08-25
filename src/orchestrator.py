@@ -16,7 +16,7 @@ from .db import (
     update_publication_assets,
 )
 from .llm import LMStudioClient
-from .models import Publication
+from .db_models import Publication
 
 
 @dataclass

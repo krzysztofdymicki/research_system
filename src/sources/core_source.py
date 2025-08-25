@@ -1,7 +1,7 @@
 import requests
 from typing import List
 
-from ..models import Publication
+from ..db_models import Publication
 from .source import Source
 from ..config import CORE_API_KEY, CORE_API_URL
 

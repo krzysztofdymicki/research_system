@@ -1,7 +1,7 @@
 import arxiv
 from typing import List
 
-from ..models import Publication
+from ..db_models import Publication
 from .source import Source
 
 
