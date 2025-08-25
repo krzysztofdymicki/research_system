@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from ..config import (
     GEMINI_MODEL,
-    LANGEXTRACT_API_KEY,
+    GOOGLE_API_KEY,
 )
 from ..db import init_db, list_publications, update_publication_extractions
 from pydantic import BaseModel, Field, ValidationError, ConfigDict, field_validator
@@ -159,7 +159,7 @@ def extract_from_text(text: str, provider_override: Optional[str] = None, includ
                 prompt_description=prompt,
                 examples=examples,
                 model_id=GEMINI_MODEL,
-                api_key=LANGEXTRACT_API_KEY,
+                api_key=GOOGLE_API_KEY,
                 fence_output=fenced,
                 use_schema_constraints=True,
             )

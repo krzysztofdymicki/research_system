@@ -6,8 +6,8 @@ load_dotenv()
 
 # Essential API keys (must be set in .env)
 CORE_API_KEY: Optional[str] = os.getenv("CORE_API_KEY")
+CORE_API_URL: str = "https://api.core.ac.uk/v3/search/works"
 GOOGLE_API_KEY: Optional[str] = os.getenv("GOOGLE_API_KEY")
-LANGEXTRACT_API_KEY: Optional[str] = GOOGLE_API_KEY
 
 # LMStudio settings (for optional local AI analysis)
 LMSTUDIO_ENDPOINT: str = os.getenv("LMSTUDIO_ENDPOINT", "http://localhost:1234/v1/chat/completions")

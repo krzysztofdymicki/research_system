@@ -3,25 +3,16 @@ from typing import List
 
 from ..models import Publication
 from .source import Source
-import os
-from ..config import CORE_API_KEY
+from ..config import CORE_API_KEY, CORE_API_URL
+
 
 class CoreSource(Source):
-    """
-    A source for fetching publications from CORE.
-    """
-    API_URL = "https://api.core.ac.uk/v3/search/works"
-
     def __init__(self):
         super().__init__("CORE")
         if not CORE_API_KEY:
             print("Warning: CORE_API_KEY not found in .env file or environment variables. CORE source will be unavailable.")
 
     def search(self, query: str, max_results: int = 10, offset: int = 0) -> List[Publication]:
-        """
-        Performs a search for papers on CORE. Supports simple pagination to
-        accumulate up to `max_results` items using the `offset` parameter.
-        """
         if not CORE_API_KEY:
             return []
 
@@ -39,7 +30,7 @@ class CoreSource(Source):
                 if cur_offset:
                     json_payload["offset"] = cur_offset
 
-                response = requests.post(self.API_URL, json=json_payload, headers=headers)
+                response = requests.post(CORE_API_URL, json=json_payload, headers=headers)
                 response.raise_for_status()
                 results = response.json()
 
@@ -68,7 +59,6 @@ class CoreSource(Source):
                     if not main_url:
                         main_url = display_url or pick_link(links, 'download')
 
-                    # Build and normalize pdf_url, always converting arXiv abs→pdf
                     def _normalize_arxiv_pdf(u: str | None) -> str | None:
                         if not u:
                             return None
@@ -105,7 +95,6 @@ class CoreSource(Source):
                 if added_this_batch == 0 or len(items) == 0:
                     break
 
-                # Stop if we've already traversed all hits
                 try:
                     total_hits = int(results.get("totalHits") or 0)
                     if cur_offset >= total_hits:
@@ -118,10 +107,3 @@ class CoreSource(Source):
         except requests.exceptions.RequestException as e:
             print(f"Error searching CORE: {e}")
             return []
-
-    # Uses common Source.download_pdf via orchestrator.
-
-"""
-CoreSource module defines the CORE provider. No direct CLI harness.
-Use the GUI or orchestrator in application flows.
-"""
