@@ -3,11 +3,12 @@ import json
 from typing import Dict, Any, Optional
 
 import requests
-from .config import (
+from ..config import (
     LMSTUDIO_ENDPOINT,
     LMSTUDIO_MODEL,
     LMSTUDIO_TEMPERATURE,
     LMSTUDIO_MAX_TOKENS,
+    RELEVANCE_EVALUATION_PROMPT,
 )
 
 
@@ -61,13 +62,10 @@ class LMStudioClient:
         return None
 
     def score_relevance(self, query: str, title: str, abstract: Optional[str]) -> Dict[str, Any]:
-        prompt = (
-            "You are an assistant that evaluates how relevant a paper is to a target research title. "
-            "Return strictly a JSON object with keys: score (0-100 integer), kept (true/false), "
-            "label (one of: 'keep','maybe','discard'), and rationale (short string). "
-            "Be conservative: only 'keep' if clearly relevant.\n\n"
-            f"Research title: {query}\nPaper title: {title}\nAbstract: {abstract or ''}\n\n"
-            "Respond with only JSON, no extra text."
+        prompt = RELEVANCE_EVALUATION_PROMPT.format(
+            query=query,
+            title=title,
+            abstract=abstract or ''
         )
 
         # HTTP OpenAI-compatible endpoint only
