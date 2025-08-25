@@ -1,14 +1,14 @@
 import sqlite3
 import json
-from typing import Optional, List, Tuple, Dict, Any
-from datetime import datetime
 import uuid
+from typing import Optional, List, Dict, Any
 
 
 def init_db(db_path: str = "research.db") -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)  # type: ignore[call-arg]
     conn.execute("PRAGMA foreign_keys = ON")
-    # New: searches table
+    
+    # Searches table
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS searches (
@@ -20,7 +20,8 @@ def init_db(db_path: str = "research.db") -> sqlite3.Connection:
         )
         """
     )
-    # New: raw_search_results table (pre-AI queue)
+    
+    # Raw search results table (pre-AI queue)
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS raw_search_results (
@@ -42,17 +43,16 @@ def init_db(db_path: str = "research.db") -> sqlite3.Connection:
         )
         """
     )
-    # Enforce global de-duplication by title (case-insensitive)
-    try:
-        conn.execute(
-            """
-            CREATE UNIQUE INDEX IF NOT EXISTS ux_raw_search_results_title
-            ON raw_search_results(title COLLATE NOCASE)
-            """
-        )
-    except Exception:
-        pass
-    # Publications: only accepted items (after AI), include storage fields
+    
+    # Unique index for global deduplication by title
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_raw_search_results_title
+        ON raw_search_results(title COLLATE NOCASE)
+        """
+    )
+    
+    # Publications table (accepted items after AI analysis)
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS publications (
@@ -68,6 +68,7 @@ def init_db(db_path: str = "research.db") -> sqlite3.Connection:
             pdf_path TEXT,
             markdown TEXT,
             extractions_json TEXT,
+            relevance_score REAL,
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now')),
             UNIQUE(source, original_id),
@@ -75,15 +76,7 @@ def init_db(db_path: str = "research.db") -> sqlite3.Connection:
         )
         """
     )
-    # Backward-compatible: add extractions_json if it doesn't exist
-    try:
-        cur = conn.execute("PRAGMA table_info(publications)")
-        cols = [r[1] for r in cur.fetchall()]
-        if "extractions_json" not in cols:
-            conn.execute("ALTER TABLE publications ADD COLUMN extractions_json TEXT")
-            conn.commit()
-    except Exception:
-        pass
+    
     return conn
 
 
@@ -186,8 +179,9 @@ def promote_to_publications(
             conn.execute(
                 """
                 INSERT OR IGNORE INTO publications(
-                    id, search_result_id, original_id, title, authors_json, url, pdf_url, abstract, source, pdf_path, markdown
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+                    id, search_result_id, original_id, title, authors_json, url, pdf_url, abstract, source, 
+                    relevance_score, pdf_path, markdown
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
                 """,
                 (
                     pub_id,
@@ -199,6 +193,7 @@ def promote_to_publications(
                     r.get("pdf_url"),
                     r.get("abstract"),
                     r.get("source"),
+                    r.get("relevance_score"),
                 ),
             )
             inserted += 1
@@ -265,25 +260,11 @@ def list_raw_results(
 def list_publications(conn: sqlite3.Connection, limit: int = 500) -> List[Dict[str, Any]]:
     cur = conn.execute(
         """
-    SELECT p.id,
-           p.search_result_id,
-           p.original_id,
-           p.title,
-           p.authors_json,
-           p.url,
-           p.pdf_url,
-           p.abstract,
-           p.source,
-           p.pdf_path,
-           p.markdown,
-           p.extractions_json,
-           p.created_at,
-           p.updated_at,
-           r.relevance_score
-      FROM publications p
-      LEFT JOIN raw_search_results r ON r.id = p.search_result_id
-     ORDER BY p.created_at DESC
-     LIMIT ?
+        SELECT id, search_result_id, original_id, title, authors_json, url, pdf_url, abstract, 
+               source, pdf_path, markdown, extractions_json, relevance_score, created_at, updated_at
+        FROM publications
+        ORDER BY created_at DESC
+        LIMIT ?
         """,
         (limit,),
     )

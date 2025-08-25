@@ -4,17 +4,17 @@ from typing import Dict, Any, Optional
 
 import requests
 from .config import (
-    LLM_ENDPOINT,
-    LLM_MODEL,
-    LLM_TEMPERATURE,
-    LLM_MAX_TOKENS,
+    LMSTUDIO_ENDPOINT,
+    LMSTUDIO_MODEL,
+    LMSTUDIO_TEMPERATURE,
+    LMSTUDIO_MAX_TOKENS,
 )
 
 
 class LMStudioClient:
     def __init__(self, endpoint: Optional[str] = None, model: Optional[str] = None, timeout: int = 60):
-        self.endpoint = endpoint or LLM_ENDPOINT
-        self.model = model or LLM_MODEL
+        self.endpoint = endpoint or LMSTUDIO_ENDPOINT
+        self.model = model or LMSTUDIO_MODEL
         self.timeout = timeout
 
     @staticmethod
@@ -71,8 +71,8 @@ class LMStudioClient:
         )
 
         # HTTP OpenAI-compatible endpoint only
-        temperature = LLM_TEMPERATURE
-        max_tokens = LLM_MAX_TOKENS
+        temperature = LMSTUDIO_TEMPERATURE
+        max_tokens = LMSTUDIO_MAX_TOKENS
         payload = {
             "model": self.model,
             "messages": [
