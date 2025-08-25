@@ -179,6 +179,8 @@ def main():
     ap.add_argument("--export-csv-publication", dest="export_csv_pub", default=None, help="Path to write per-publication CSV (one doc per paper; text = concatenated phrases)")
     ap.add_argument("--db", dest="db_path", default="research.db", help="Path to SQLite database (default: research.db)")
     ap.add_argument("--dedupe-within-publication", action="store_true", help="Remove duplicate (class, text_norm) within each publication, prefer non-empty sector")
+    ap.add_argument("--auto-bert", action="store_true", help="Automatically create normalized CSV in debug/BERT and optionally run BERTopic training")
+    ap.add_argument("--run-bertopic", action="store_true", help="Run BERTopic training after normalization (requires --auto-bert)")
     args = ap.parse_args()
 
     rows = load_flattened(
@@ -267,6 +269,88 @@ def main():
                 ])
         print(json.dumps({"export_csv_publication": path, "rows": len(grouped)}, ensure_ascii=False))
 
+    # Auto-BERT integration
+    if args.auto_bert:
+        import datetime
+        
+        # Create debug/BERT structure if needed
+        bert_dir = os.path.join("debug", "BERT", "source_data")
+        os.makedirs(bert_dir, exist_ok=True)
+        
+        # Generate timestamped filename
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        auto_csv_path = os.path.join(bert_dir, f"normalized_extractions_{timestamp}.csv")
+        
+        # Export CSV for BERTopic
+        with open(auto_csv_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "doc_id",
+                "text", 
+                "class",
+                "sector_norm",
+                "publication_id",
+                "publication_title",
+                "source",
+            ])
+            for idx, r in enumerate(rows):
+                doc_id = f"doc-{idx+1}"
+                writer.writerow([
+                    doc_id,
+                    r.get("text_norm") or "",
+                    r.get("class") or "",
+                    r.get("sector_norm") or "",
+                    r.get("publication_id") or "",
+                    r.get("publication_title") or "",
+                    r.get("source") or "",
+                ])
+        
+        print(f"\nAuto-BERT: Created normalized CSV with {len(rows)} rows")
+        print(f"Location: {auto_csv_path}")
+        
+        # Run BERTopic if requested
+        if args.run_bertopic:
+            import subprocess
+            import sys
+            
+            print("\nRunning BERTopic training...")
+            try:
+                # Use venv Python if available
+                python_cmd = sys.executable
+                if os.path.exists(".venv/Scripts/python.exe"):
+                    python_cmd = ".venv/Scripts/python.exe"
+                elif os.path.exists(".venv/bin/python"):
+                    python_cmd = ".venv/bin/python"
+                
+                # Basic BERTopic command
+                bert_cmd = [
+                    python_cmd,
+                    "src/bertopic_train.py",
+                    "--csv", auto_csv_path,
+                    "--run-name", f"auto_from_normalize_{timestamp}",
+                    "--topn", "5",
+                    "--min-cluster-size", "5"
+                ]
+                
+                # Add per-class training if both classes present
+                if args.klass == "both":
+                    bert_cmd.append("--topics-per-class")
+                
+                print(f"Command: {' '.join(bert_cmd)}")
+                result = subprocess.run(bert_cmd, capture_output=True, text=True)
+                
+                if result.returncode == 0:
+                    print("✅ BERTopic training completed successfully!")
+                    print("Check debug/BERT/ for results")
+                else:
+                    print("❌ BERTopic training failed:")
+                    print(result.stderr)
+                    
+            except Exception as e:
+                print(f"❌ Error running BERTopic: {e}")
+        else:
+            print("\nTo run BERTopic training on this data:")
+            print(f"  python src/bertopic_train.py --csv {auto_csv_path} --topics-per-class")
 
 
 if __name__ == "__main__":

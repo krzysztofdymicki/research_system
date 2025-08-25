@@ -43,5 +43,8 @@ debug
 
 # Database files
 research_test.db
-
 src/make_test_db.py
+
+#BERT
+src/normalize_extractions.py
+src/bertopic_train.py

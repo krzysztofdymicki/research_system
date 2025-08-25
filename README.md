@@ -1,113 +1,77 @@
 # Research System
 
-A tool for searching academic papers from arXiv and CORE, with basic AI relevance scoring.
+Local-first workflow for academic papers: search arXiv/CORE, curate relevant results, download PDFs, extract content, run strict JSON extraction with Pydantic validation, and prepare BERTopic corpora with interactive topic visualizations.
 
-## Features
+## Highlights
+- Search arXiv and CORE; save to SQLite.
+- Tkinter GUI tabs: Search, Search Results, Publications, JSON viewer, config editor.
+- Relevance Score column in Publications (join from raw search results).
+- Configurable extraction (prompt/classes/examples), strict validation, save only valid JSON.
+- Normalization + CSV exports for BERTopic (per-extraction and per-publication).
+- `bertopic_train.py` trains and outputs doc→topic mapping, topics list, and HTML visualizations.
+- Test DB utility for fast iterations.
 
-- Search papers from arXiv and CORE APIs
-- Filter results using Gemini AI (relevance score 0-100)
-- Download PDFs and extract text
-- Simple GUI interface (Tkinter)
-
-## Installation
-
-1. Clone the repository
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
+## Setup (Windows PowerShell)
+1) Create and activate a Python 3.11 venv:
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+2) Install the project and core deps:
+```powershell
+python -m pip install --upgrade pip
+python -m pip install -e .
+```
+3) Optional — Topic modeling and visuals:
+```powershell
+pip install bertopic umap-learn hdbscan scikit-learn
+```
+4) Run the GUI:
+```powershell
+python .\src\app.py
 ```
 
-3. Set up your API keys in `.env`:
+## Core Files
+- `src/app.py` — Tkinter GUI: search, analyze, promote, download, extract, view JSON, edit config.
+- `src/sources/*.py` — arXiv and CORE search implementations.
+- `src/db.py` — SQLite schema + helpers; `publications.extractions_json` stores validated extractions.
+- `src/extraction_config.py` — Config for prompt, allowed classes, examples.
+- `src/extractors/langextract_adapter.py` — Cloud adapter, unfenced→fenced JSON parsing, Pydantic validation, quiet logs.
+- `src/normalize_extractions.py` — Minimal normalization, per-extraction/per-publication CSV exports, optional dedupe.
+- `src/make_test_db.py` — Create small subset DB for testing.
+- `src/bertopic_train.py` — Train BERTopic; exports mapping, topics CSV, and Plotly HTML.
+
+## Exports
+- Per-extraction CSV:
+```powershell
+python -m src.normalize_extractions --db .\research.db --class both --dedupe-within-publication --export-csv .\debug\bertopic_docs.csv
 ```
-GEMINI_API_KEY=your_gemini_api_key_here
-CORE_API_KEY=your_core_api_key_here  # Optional
+- Per-publication CSV:
+```powershell
+python -m src.normalize_extractions --db .\research.db --class both --dedupe-within-publication --export-csv-publication .\debug\bertopic_pubs.csv
 ```
+Normalization includes: Unicode NFKC, lowercasing, whitespace collapse, de-spaced token merging. Dedupe key: `(class, text_norm)`, preferring rows with non-empty sector.
 
-## Usage
-
-```bash
-python -m src.app
+## BERTopic & Visualizations
+Train and output mapping + topics + HTML:
+```powershell
+python .\src\bertopic_train.py `
+	--csv .\debug\bertopic_docs.csv `
+	--out-mapping .\debug\bertopic_doc_topics.csv `
+	--out-topics .\debug\bertopic_topics.csv `
+	--viz-dir .\debug\bertopic_viz `
+	--topn 8 `
+	--min-df 2
 ```
+Outputs:
+- `bertopic_doc_topics.csv` — `doc_id, publication_id, topic, probability, top_words`
+- `bertopic_topics.csv` — BERTopic topic info table
+- `bertopic_viz/` — `topics.html`, `barchart.html`, `hierarchy.html`, `heatmap.html`
 
-## Project Structure
-
-```
-research_system/
-├── src/
-│   ├── app.py              # GUI (Tkinter)
-│   ├── orchestrator.py     # Main workflow
-│   ├── db.py               # SQLite operations
-│   ├── models.py           # Data models
-│   ├── sources/
-│   │   ├── source.py       # Base source class
-│   │   ├── arxiv_source.py # arXiv API
-│   │   └── core_source.py  # CORE API
-│   └── ai/
-│       └── gemini_analyzer.py  # Gemini AI scoring
-├── papers/                 # Downloaded PDFs (created automatically)
-├── research.db            # SQLite database (created automatically)
-├── requirements.txt       # Dependencies
-├── .env.example          # Example environment variables
-└── README.md            # This file
-```
-
-## Database
-
-SQLite with two tables:
-- **raw_results**: Search results with AI scores
-- **publications**: Papers marked for keeping
-
-## Configuration
-
-### Search Options
-- `query`: Search string
-- `max_results`: Results per source (1-50)
-- `use_arxiv`: Enable/disable arXiv
-- `use_core`: Enable/disable CORE
-- `arxiv_in_title`: Search in titles
-- `arxiv_in_abstract`: Search in abstracts
-
-### AI Analysis
-- `threshold`: Minimum score to keep (0-100)
-- `research_title`: Optional context for scoring
-
-## Requirements
-
-- Python 3.8+
-- Gemini API key (required)
-- CORE API key (optional)
-- Internet connection
+## Troubleshooting
+- Prefer Python 3.11 venv for BERTopic.
+- Ensure `pip` and `python` are from the same venv.
+- If exports are empty, confirm `publications.extractions_json` has validated items.
 
 ## License
-
-MIT
-### AI Analysis
-- `threshold`: Minimum score to keep (0-100)
-- `research_title`: Optional context for scoring
-
-## Requirements
-
-- Python 3.8+
-- Gemini API key (required)
-- CORE API key (optional)
-- Internet connection
-
-## License
-
-MIT
-- `arxiv_in_abstract`: Search in abstracts (arXiv)
-
-### AI Analysis
-- `threshold`: Minimum relevance score (0-100) to keep papers
-- `research_title`: Optional context for better relevance scoring
-
-## Requirements
-
-- Python 3.8+
-- Google Gemini API key (required)
-- CORE API key (optional, for higher rate limits)
-- Internet connection for API access
-
-## License
-
 MIT
