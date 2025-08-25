@@ -4,7 +4,7 @@ import os
 import requests
 import pymupdf4llm
 
-from ..db_models import Publication
+from ..db.models import Publication
 
 
 class Source(ABC):

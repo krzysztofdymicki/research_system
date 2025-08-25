@@ -5,7 +5,7 @@ import uuid
 from .sources.arxiv_source import ArxivSource
 from .sources.core_source import CoreSource
 from .sources.source import extract_text_from_pdf, download_pdf_for_publication
-from .db import (
+from .db.db import (
     init_db,
     insert_search,
     insert_raw_result,
@@ -15,8 +15,8 @@ from .db import (
     list_publications,
     update_publication_assets,
 )
+from .db.models import Publication
 from .llm import LMStudioClient
-from .db_models import Publication
 
 
 @dataclass

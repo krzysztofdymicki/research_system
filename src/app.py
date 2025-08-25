@@ -14,10 +14,10 @@ try:
         analyze_with_progress,
         promote_kept,
     )
-    from .db import init_db, list_raw_results, list_publications, reset_db, update_publication_assets
-    from .db import update_publication_extractions
+    from .db.db import init_db, list_raw_results, list_publications, reset_db, update_publication_assets
+    from .db.db import update_publication_extractions
     from .extractors.langextract_adapter import extract_from_publication
-    from .db_models import Publication
+    from .db.models import Publication
     from .sources.source import download_pdf_for_publication, extract_text_from_pdf
 except ImportError:
     import sys as _sys
@@ -28,10 +28,10 @@ except ImportError:
         analyze_with_progress,
         promote_kept,
     )
-    from db import init_db, list_raw_results, list_publications, reset_db, update_publication_assets
-    from db import update_publication_extractions
+    from db.db import init_db, list_raw_results, list_publications, reset_db, update_publication_assets
+    from db.db import update_publication_extractions
     from extractors.langextract_adapter import extract_from_publication
-    from db_models import Publication
+    from db.models import Publication
     from sources.source import download_pdf_for_publication, extract_text_from_pdf
 
 

@@ -9,7 +9,7 @@ from ..config import (
     GEMINI_MODEL,
     GOOGLE_API_KEY,
 )
-from ..db import init_db, list_publications, update_publication_extractions
+from ..db.db import init_db, list_publications, update_publication_extractions
 from pydantic import BaseModel, Field, ValidationError, ConfigDict, field_validator
 from ..extraction_config import load_extraction_config
 @contextmanager
