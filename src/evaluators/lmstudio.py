@@ -1,4 +1,3 @@
-import os
 import json
 from typing import Dict, Any, Optional
 
@@ -23,18 +22,19 @@ class LMStudioClient:
         if not text:
             return None
         s = str(text).strip()
+        
         # Handle Markdown code fences ```json ... ``` or ``` ... ```
         if s.startswith("```"):
-            # strip leading ```
             body = s[3:]
             end = body.find("```")
             if end != -1:
                 fenced = body[:end].lstrip()
-                # Remove optional language tag like 'json' at the start
+                # Remove optional language tag like 'json'
                 if fenced.lower().startswith("json"):
                     fenced = fenced[4:].lstrip()
                 return fenced.strip()
-        # Fallback: extract first balanced JSON object by brace counting
+        
+        # Extract first balanced JSON object by brace counting
         start = s.find("{")
         if start == -1:
             return None
@@ -68,23 +68,18 @@ class LMStudioClient:
             abstract=abstract or ''
         )
 
-        # HTTP OpenAI-compatible endpoint only
-        temperature = LMSTUDIO_TEMPERATURE
-        max_tokens = LMSTUDIO_MAX_TOKENS
         payload = {
             "model": self.model,
-            "messages": [
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": temperature,
-            "max_tokens": max_tokens,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": LMSTUDIO_TEMPERATURE,
+            "max_tokens": LMSTUDIO_MAX_TOKENS,
         }
         resp = requests.post(self.endpoint, json=payload, timeout=self.timeout)
         resp.raise_for_status()
         data = resp.json()
         content = data["choices"][0]["message"]["content"]
 
-        # Try parse JSON directly; if that fails, extract from code fences/balanced braces
+        # Parse JSON response with fallback to extraction from code fences
         out: Dict[str, Any]
         raw_json = None
         try:
@@ -100,7 +95,8 @@ class LMStudioClient:
                     out = {"score": 0, "kept": False, "label": "discard", "rationale": "parse_error"}
             except Exception:
                 out = {"score": 0, "kept": False, "label": "discard", "rationale": "parse_error"}
-        # Normalize types
+        
+        # Normalize response fields
         raw_score = out.get("score")
         try:
             score = int(raw_score if raw_score is not None else 0)
