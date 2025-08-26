@@ -87,7 +87,7 @@ def analyze_with_progress(
     cancel_flag: Optional[Callable[[], bool]] = None,
     progress_cb: Optional[Callable[[int, int, int], None]] = None,
     research_title: Optional[str] = None,
-) -> Tuple[int, int]:
+) -> Tuple[int, int, int]:
     """Analyze pending items with AI relevance scoring.
 
     Args:
@@ -98,7 +98,7 @@ def analyze_with_progress(
         research_title: Override query for analysis context
         
     Returns:
-        Tuple of (analyzed_count, kept_count_above_threshold)
+        Tuple of (analyzed_count, kept_count_above_threshold, scored_successfully)
     """
     conn = init_db()
     rows = list_raw_results(conn, search_id=search_id, only_pending=True, limit=100000)
@@ -110,11 +110,12 @@ def analyze_with_progress(
                 progress_cb(0, 0, 0)
             except Exception:
                 pass
-        return 0, 0
+        return 0, 0, 0
 
     client = LMStudioClient()
     analyzed = 0
     kept = 0
+    scored_successfully = 0
     
     for r in rows:
         if cancel_flag and cancel_flag():
@@ -135,6 +136,7 @@ def analyze_with_progress(
                 relevance_score=score,
                 analysis_json=analysis_json,
             )
+            scored_successfully += 1
             
             if score >= threshold:
                 kept += 1
@@ -151,7 +153,7 @@ def analyze_with_progress(
             except Exception:
                 pass
                 
-    return analyzed, kept
+    return analyzed, kept, scored_successfully
 
 
 def promote_kept(threshold: int = 70, search_id: Optional[str] = None) -> int:

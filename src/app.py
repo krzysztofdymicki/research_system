@@ -45,6 +45,8 @@ if 'analysis_progress' not in st.session_state:
     st.session_state.analysis_progress = {"current": 0, "total": 0, "kept": 0}
 if 'last_search_results' not in st.session_state:
     st.session_state.last_search_results = None
+if 'last_analysis_result' not in st.session_state:
+    st.session_state.last_analysis_result = None
 if 'last_promotion_result' not in st.session_state:
     st.session_state.last_promotion_result = None
 
@@ -308,6 +310,10 @@ def render_results_tab():
     if st.session_state.search_results_df is None or st.session_state.search_results_df.empty:
         st.info("No search results yet. Run a search first!")
         return
+
+    # Display persistent analysis result if available
+    if st.session_state.last_analysis_result:
+        st.success(st.session_state.last_analysis_result)
     
     # Analysis section
     with st.container():
@@ -330,6 +336,7 @@ def render_results_tab():
         
         # Progress bar for analysis
         if analyze_btn:
+            st.session_state.last_analysis_result = None
             progress_bar = st.progress(0)
             status_text = st.empty()
             
@@ -340,12 +347,12 @@ def render_results_tab():
                     status_text.text(f"Analyzing: {done}/{total}")
             
             with st.spinner("Running AI analysis..."):
-                analyzed, kept = analyze_with_progress(
+                analyzed, kept, scored = analyze_with_progress(
                     None, 70, None, progress_callback,  # używamy domyślnego threshold 70
                     research_title if research_title else None
                 )
             
-            st.success(f"Analyzed {analyzed} items, {kept} kept")
+            st.session_state.last_analysis_result = f"Analysis complete. Scored {scored}/{analyzed} items. Kept {kept} based on threshold."
             load_data()
             st.rerun()  # Odświeży aplikację po analizie
     
@@ -622,7 +629,7 @@ def render_config_tab():
     st.header("Extraction Configuration")
     
     st.markdown("""
-    Configure the LangExtract NLP processing settings. This affects how the system 
+    Configure the LangExtract processing settings. This affects how the system 
     extracts content from publications.
     """)
     
