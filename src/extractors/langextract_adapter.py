@@ -11,7 +11,7 @@ from ..config import (
 )
 from ..db.db import init_db, list_publications, update_publication_extractions
 from pydantic import BaseModel, Field, ValidationError, ConfigDict, field_validator
-from ..extraction_config import load_extraction_config
+from .utils import load_extraction_config
 @contextmanager
 def _suppress_stdout_stderr():
     saved_out, saved_err = sys.stdout, sys.stderr

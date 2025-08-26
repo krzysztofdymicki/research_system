@@ -1,1 +1,0 @@
-"""Evaluator package for research_system."""

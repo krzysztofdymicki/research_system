@@ -7,32 +7,17 @@ from pathlib import Path
 import json
 import time
 
-try:
-    from .orchestrator import (
-        SearchOptions,
-        run_search_and_save,
-        analyze_with_progress,
-        promote_kept,
-    )
-    from .db.db import init_db, list_raw_results, list_publications, reset_db, update_publication_assets
-    from .db.db import update_publication_extractions
-    from .extractors.langextract_adapter import extract_from_publication
-    from .db.models import Publication
-    from .sources.source import download_pdf_for_publication, extract_text_from_pdf
-except ImportError:
-    import sys as _sys
-    _sys.path.append(os.path.dirname(__file__))
-    from orchestrator import (
-        SearchOptions,
-        run_search_and_save,
-        analyze_with_progress,
-        promote_kept,
-    )
-    from db.db import init_db, list_raw_results, list_publications, reset_db, update_publication_assets
-    from db.db import update_publication_extractions
-    from extractors.langextract_adapter import extract_from_publication
-    from db.models import Publication
-    from sources.source import download_pdf_for_publication, extract_text_from_pdf
+from .services import (
+    SearchOptions,
+    run_search_and_save,
+    analyze_with_progress,
+    promote_kept,
+    download_pdfs_batch,
+    extract_markdown_batch,
+)
+from .db.db import init_db, list_raw_results, list_publications, reset_db, update_publication_assets
+from .db.db import update_publication_extractions
+from .extractors.langextract_adapter import extract_from_publication
 
 
 class App(tk.Tk):
@@ -71,7 +56,7 @@ class App(tk.Tk):
         ttk.Checkbutton(frm, text="Abstract", variable=self.arxiv_in_abstract).grid(row=3, column=2, sticky=tk.W, pady=(6, 0))
 
         # Search runs metadata-only; downloads happen later for kept
-        self.run_btn = ttk.Button(frm, text="Run Search", command=self.on_run)
+        self.run_btn = ttk.Button(frm, text="Run Search", command=self.on_run_search)
         self.run_btn.grid(row=4, column=0, pady=10, sticky=tk.W)
 
         self.status_var = tk.StringVar(value="Idle")
@@ -88,7 +73,7 @@ class App(tk.Tk):
 
         ttk.Separator(frm).grid(row=9, column=0, columnspan=4, sticky="ew", pady=(8, 4))
         ttk.Label(frm, text="Reset:").grid(row=10, column=0, sticky=tk.W)
-        ttk.Button(frm, text="Reset DB + papers now", command=self.on_reset_now).grid(row=10, column=1, sticky=tk.W)
+        ttk.Button(frm, text="Reset DB + papers now", command=self.on_reset_database).grid(row=10, column=1, sticky=tk.W)
 
         for i in range(4):
             frm.columnconfigure(i, weight=1)
@@ -122,7 +107,7 @@ class App(tk.Tk):
         self.tree.column("relevance", width=60, anchor=tk.E)
         self.tree.column("analyzed", width=80)
         self.tree.grid(row=0, column=0, sticky="nsew", pady=(8, 8))
-        self.tree.bind("<<TreeviewSelect>>", self.on_row_select)
+        self.tree.bind("<<TreeviewSelect>>", self.on_result_selection)
 
         # Analysis controls
         ctrl = ttk.Frame(res)
@@ -133,7 +118,7 @@ class App(tk.Tk):
         ttk.Label(ctrl, text="AI threshold:").pack(side=tk.LEFT)
         self.threshold_var = tk.IntVar(value=70)
         ttk.Spinbox(ctrl, from_=0, to=100, textvariable=self.threshold_var, width=5).pack(side=tk.LEFT, padx=(4, 10))
-        ttk.Button(ctrl, text="Analyze Pending", command=self.on_run_ai).pack(side=tk.LEFT)
+        ttk.Button(ctrl, text="Analyze Pending", command=self.on_run_ai_analysis).pack(side=tk.LEFT)
         # Progress and cancel controls
         self.ai_progress = ttk.Progressbar(ctrl, length=160, mode="determinate", maximum=100)
         self.ai_progress.pack(side=tk.LEFT, padx=(10, 6))
@@ -201,7 +186,7 @@ class App(tk.Tk):
         self.refresh_results()
         self.refresh_publications()
 
-    def on_run(self):
+    def on_run_search(self):
         query = self.query_var.get().strip()
         if not query:
             messagebox.showwarning("Validation", "Please enter a query.")
@@ -218,8 +203,6 @@ class App(tk.Tk):
             use_core=self.use_core.get(),
             arxiv_in_title=self.arxiv_in_title.get(),
             arxiv_in_abstract=self.arxiv_in_abstract.get(),
-            download_pdfs=False,
-            extract_markdown=False,
         )
 
         self.run_btn.config(state=tk.DISABLED)
@@ -277,7 +260,7 @@ class App(tk.Tk):
             self.tree.insert("", tk.END, iid=rid, values=(r["title"], r["source"], r.get("query") or "", score_str, analyzed))
             self._rows_by_id[rid] = r
 
-    def on_row_select(self, _evt):
+    def on_result_selection(self, _evt):
         sel = self.tree.selection()
         if not sel:
             return
@@ -299,7 +282,7 @@ class App(tk.Tk):
         self.detail.delete("1.0", tk.END)
         self.detail.insert("1.0", "\n".join(lines))
 
-    def on_run_ai(self):
+    def on_run_ai_analysis(self):
         threshold = self.threshold_var.get()
         self.ai_cancel_requested = False
 
@@ -363,98 +346,46 @@ class App(tk.Tk):
         threading.Thread(target=work, daemon=True).start()
 
     def on_download_pubs(self):
-        self.download_btn.config(state=tk.DISABLED)
-        self.extract_btn.config(state=tk.DISABLED)
+        self._disable_publication_buttons()
         
         def work():
             try:
-                # Get list of publications needing PDFs
-                conn = init_db()
-                pubs = list_publications(conn, limit=500)
-                to_download = [p for p in pubs if not p.get("pdf_path")]
-                total = len(to_download)
-                downloaded = 0
-                
-                for idx, pub in enumerate(to_download, 1):
-                    try:
-                        # Update status before each download
-                        self.after(0, lambda i=idx, t=total: self.status_var.set(f"Downloading PDF {i}/{t}..."))
-                        
-                        # Convert dict to Publication model
-                        pub_obj = Publication(
-                            id=pub["id"],
-                            original_id=pub.get("original_id"),
-                            title=pub["title"],
-                            authors=pub.get("authors") or [],
-                            abstract=pub.get("abstract"),
-                            url=pub["url"],
-                            pdf_url=pub.get("pdf_url"),
-                            source=pub["source"],
-                        )
-                        
-                        pdf_path = download_pdf_for_publication(pub_obj)
-                        if pdf_path:
-                            conn = init_db()
-                            update_publication_assets(conn, publication_id=pub["id"], pdf_path=pdf_path)
-                            downloaded += 1
-                            
-                        # Refresh GUI after each successful download
-                        self.after(0, self.refresh_publications)
-                        
-                    except Exception:
-                        pass  # Continue with next PDF
-                
-                self.after(0, lambda: self.status_var.set(f"PDFs: attempted {total}, downloaded {downloaded}."))
-                
+                attempted, downloaded = download_pdfs_batch()
+                self.after(0, lambda: self.status_var.set(f"PDFs: attempted {attempted}, downloaded {downloaded}."))
             except Exception as e:
                 self.after(0, lambda: messagebox.showerror("Download Error", str(e)))
             finally:
-                self.after(0, lambda: self.download_btn.config(state=tk.NORMAL))
-                self.after(0, lambda: self.extract_btn.config(state=tk.NORMAL))
+                self.after(0, self._enable_publication_buttons)
                 self.after(0, self.refresh_publications)
         
         threading.Thread(target=work, daemon=True).start()
 
     def on_extract_pubs(self):
-        self.download_btn.config(state=tk.DISABLED)
-        self.extract_btn.config(state=tk.DISABLED)
+        self._disable_publication_buttons()
         
         def work():
             try:
-                # Get list of publications with PDFs but no markdown
-                conn = init_db()
-                pubs = list_publications(conn, limit=500)
-                to_extract = [p for p in pubs if p.get("pdf_path") and not p.get("markdown")]
-                total = len(to_extract)
-                extracted = 0
-                
-                for idx, pub in enumerate(to_extract, 1):
-                    try:
-                        # Update status before each extraction
-                        self.after(0, lambda i=idx, t=total: self.status_var.set(f"Extracting markdown {i}/{t}..."))
-                        
-                        text = extract_text_from_pdf(pub["pdf_path"])
-                        if text:
-                            conn = init_db()
-                            update_publication_assets(conn, publication_id=pub["id"], markdown=text)
-                            extracted += 1
-                            
-                        # Refresh GUI after each successful extraction
-                        self.after(0, self.refresh_publications)
-                        
-                    except Exception:
-                        pass  # Continue with next extraction
-                
-                self.after(0, lambda: self.status_var.set(f"Markdown: attempted {total}, extracted {extracted}."))
-                
+                attempted, extracted = extract_markdown_batch()
+                self.after(0, lambda: self.status_var.set(f"Markdown: attempted {attempted}, extracted {extracted}."))
             except Exception as e:
                 self.after(0, lambda: messagebox.showerror("Extract Error", str(e)))
             finally:
-                self.after(0, lambda: self.download_btn.config(state=tk.NORMAL))
-                self.after(0, lambda: self.extract_btn.config(state=tk.NORMAL))
+                self.after(0, self._enable_publication_buttons)
                 self.after(0, self.refresh_publications)
         
         threading.Thread(target=work, daemon=True).start()
+
+    def _disable_publication_buttons(self):
+        """Disable publication action buttons during operations."""
+        buttons = [self.download_btn, self.extract_btn, self.nlp_btn, self.view_btn, self.nlp_all_btn, self.cfg_btn]
+        for btn in buttons:
+            btn.config(state=tk.DISABLED)
+
+    def _enable_publication_buttons(self):
+        """Re-enable publication action buttons after operations."""
+        buttons = [self.download_btn, self.extract_btn, self.nlp_btn, self.view_btn, self.nlp_all_btn, self.cfg_btn]
+        for btn in buttons:
+            btn.config(state=tk.NORMAL)
 
     def refresh_publications(self):
         conn = init_db()
@@ -480,88 +411,72 @@ class App(tk.Tk):
         if not pub_id:
             messagebox.showwarning("Run Extractions", "Please select a publication in the table.")
             return
+            
+        self._disable_publication_buttons()
         self.status_var.set("Running NLP extractions...")
-        self.download_btn.config(state=tk.DISABLED)
-        self.extract_btn.config(state=tk.DISABLED)
-        self.nlp_btn.config(state=tk.DISABLED)
-        self.view_btn.config(state=tk.DISABLED)
 
         def work():
             try:
-                res = extract_from_publication(pub_id)
-                js = json.dumps(res, ensure_ascii=False)
-                # Save results into DB only when ok
-                if res.get("ok"):
-                    try:
-                        conn = init_db()
-                        update_publication_extractions(conn, publication_id=pub_id, extractions_json=js)
-                    except Exception:
-                        pass
-                if not res.get("ok"):
-                    err = str(res.get("error") or "Unknown LLM error")
-                    self.after(0, lambda e_msg=err: messagebox.showerror("NLP Error", e_msg))
-                else:
+                result = extract_from_publication(pub_id)
+                if result.get("ok"):
+                    # Save to database
+                    json_str = json.dumps(result, ensure_ascii=False)
+                    conn = init_db()
+                    update_publication_extractions(conn, publication_id=pub_id, extractions_json=json_str)
                     self.after(0, lambda: self.status_var.set("Extractions saved."))
+                else:
+                    error_msg = str(result.get("error") or "Unknown LLM error")
+                    self.after(0, lambda: messagebox.showerror("NLP Error", error_msg))
             except Exception as e:
-                e_msg = str(e)
-                self.after(0, lambda em=e_msg: messagebox.showerror("NLP Error", em))
+                self.after(0, lambda: messagebox.showerror("NLP Error", str(e)))
             finally:
+                self.after(0, self._enable_publication_buttons)
                 self.after(0, self.refresh_publications)
-                self.after(0, lambda: self.download_btn.config(state=tk.NORMAL))
-                self.after(0, lambda: self.extract_btn.config(state=tk.NORMAL))
-                self.after(0, lambda: self.nlp_btn.config(state=tk.NORMAL))
-                self.after(0, lambda: self.view_btn.config(state=tk.NORMAL))
 
         threading.Thread(target=work, daemon=True).start()
 
     def on_run_extractions_all(self):
-        # Disable controls
-        self.download_btn.config(state=tk.DISABLED)
-        self.extract_btn.config(state=tk.DISABLED)
-        self.nlp_btn.config(state=tk.DISABLED)
-        self.view_btn.config(state=tk.DISABLED)
-        self.nlp_all_btn.config(state=tk.DISABLED)
+        self._disable_publication_buttons()
 
         def work():
             try:
                 conn = init_db()
-                pubs = list_publications(conn, limit=100000)
-                to_process = [p for p in pubs if p.get("markdown") and not p.get("extractions_json")]
-                # cloud-only extraction path
+                publications = list_publications(conn, limit=100000)
+                to_process = [p for p in publications if p.get("markdown") and not p.get("extractions_json")]
+                
                 total = len(to_process)
-                done = 0
                 if total == 0:
                     self.after(0, lambda: messagebox.showinfo("Extract All", "Nothing to do. Ensure markdown exists and no extractions saved."))
+                    return
+                
+                processed = 0
                 for idx, pub in enumerate(to_process, 1):
                     try:
                         self.after(0, lambda i=idx, t=total: self.status_var.set(f"Running NLP extractions {i}/{t}..."))
-                        pid = str(pub["id"])
-                        res = extract_from_publication(pid)
-                        if res.get("ok"):
-                            js = json.dumps(res, ensure_ascii=False)
-                            try:
-                                conn2 = init_db()
-                                update_publication_extractions(conn2, publication_id=pid, extractions_json=js)
-                            except Exception:
-                                pass
-                            done += 1
-                        # refresh UI row
-                        self.after(0, self.refresh_publications)
-                        # small pause to keep UI responsive
+                        
+                        result = extract_from_publication(str(pub["id"]))
+                        if result.get("ok"):
+                            json_str = json.dumps(result, ensure_ascii=False)
+                            conn = init_db()
+                            update_publication_extractions(conn, publication_id=pub["id"], extractions_json=json_str)
+                            processed += 1
+                            
+                        # Refresh UI periodically
+                        if idx % 5 == 0:
+                            self.after(0, self.refresh_publications)
+                            
+                        # Small pause for responsiveness
                         time.sleep(0.05)
+                        
                     except Exception:
-                        # continue with next
-                        pass
-                self.after(0, lambda d=done, t=total: self.status_var.set(f"NLP extractions complete: {d}/{t} saved."))
+                        continue  # Skip failed extractions
+                
+                self.after(0, lambda: self.status_var.set(f"NLP extractions complete: {processed}/{total} saved."))
+                
             except Exception as e:
                 self.after(0, lambda: messagebox.showerror("Extract All Error", str(e)))
             finally:
-                # Re-enable controls
-                self.after(0, lambda: self.download_btn.config(state=tk.NORMAL))
-                self.after(0, lambda: self.extract_btn.config(state=tk.NORMAL))
-                self.after(0, lambda: self.nlp_btn.config(state=tk.NORMAL))
-                self.after(0, lambda: self.view_btn.config(state=tk.NORMAL))
-                self.after(0, lambda: self.nlp_all_btn.config(state=tk.NORMAL))
+                self.after(0, self._enable_publication_buttons)
                 self.after(0, self.refresh_publications)
 
         threading.Thread(target=work, daemon=True).start()
@@ -580,13 +495,13 @@ class App(tk.Tk):
         try:
             parsed = json.loads(row["extractions_json"])  # type: ignore[arg-type]
             pretty = json.dumps(parsed, ensure_ascii=False, indent=2)
-            self._open_json_viewer("Extractions JSON", pretty)
+            self._show_json_viewer("Extractions JSON", pretty)
         except Exception:
-            self._open_json_viewer("Extractions JSON", row.get("extractions_json") or "")
+            self._show_json_viewer("Extractions JSON", row.get("extractions_json") or "")
 
     # Removed debug markdown viewer per request
 
-    def _open_json_viewer(self, title: str, text: str):
+    def _show_json_viewer(self, title: str, text: str):
         top = tk.Toplevel(self)
         top.title(title)
         top.geometry("760x560")
@@ -607,65 +522,77 @@ class App(tk.Tk):
         txt.insert("1.0", text or "")
         txt.focus_set()
 
-    def on_open_config_editor(self):
-        try:
-            from .extraction_config import load_extraction_config, save_extraction_config, get_default_config
-        except Exception as e:
-            messagebox.showerror("Config", f"Cannot load config: {e}")
-            return
-        data = load_extraction_config()
-        pretty = json.dumps(data, ensure_ascii=False, indent=2)
-
-        top = tk.Toplevel(self)
-        top.title("Extraction Config Editor")
-        top.geometry("900x640")
-        container = ttk.Frame(top, padding=6)
+    def _show_config_editor(self, initial_content: str, save_func, reset_func):
+        """Show configuration editor window."""
+        window = tk.Toplevel(self)
+        window.title("Extraction Config Editor")
+        window.geometry("900x640")
+        
+        container = ttk.Frame(window, padding=6)
         container.pack(fill=tk.BOTH, expand=True)
 
-        txt = tk.Text(container, wrap=tk.NONE)
-        vsb = ttk.Scrollbar(container, orient=tk.VERTICAL, command=txt.yview)
-        hsb = ttk.Scrollbar(container, orient=tk.HORIZONTAL, command=txt.xview)
-        txt.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        # Text editor with scrollbars
+        text_widget = tk.Text(container, wrap=tk.NONE)
+        v_scrollbar = ttk.Scrollbar(container, orient=tk.VERTICAL, command=text_widget.yview)
+        h_scrollbar = ttk.Scrollbar(container, orient=tk.HORIZONTAL, command=text_widget.xview)
+        text_widget.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
 
-        txt.grid(row=0, column=0, sticky="nsew")
-        vsb.grid(row=0, column=1, sticky="ns")
-        hsb.grid(row=1, column=0, sticky="ew")
+        text_widget.grid(row=0, column=0, sticky="nsew")
+        v_scrollbar.grid(row=0, column=1, sticky="ns")
+        h_scrollbar.grid(row=1, column=0, sticky="ew")
+        
         container.rowconfigure(0, weight=1)
         container.columnconfigure(0, weight=1)
 
-        txt.insert("1.0", pretty)
+        text_widget.insert("1.0", initial_content)
 
-        btns = ttk.Frame(top)
-        btns.pack(fill=tk.X)
+        # Button panel
+        button_panel = ttk.Frame(window)
+        button_panel.pack(fill=tk.X)
+
         def on_save():
             try:
-                new_text = txt.get("1.0", tk.END)
-                obj = json.loads(new_text)
-                # basic validation of keys
-                if not isinstance(obj, dict):
+                new_content = text_widget.get("1.0", tk.END)
+                config_obj = json.loads(new_content)
+                
+                # Basic validation
+                if not isinstance(config_obj, dict):
                     raise ValueError("Root must be an object")
-                if "prompt" not in obj or not isinstance(obj["prompt"], str):
+                if "prompt" not in config_obj or not isinstance(config_obj["prompt"], str):
                     raise ValueError("Missing 'prompt' (string)")
-                if "allowed_classes" not in obj or not isinstance(obj["allowed_classes"], list):
+                if "allowed_classes" not in config_obj or not isinstance(config_obj["allowed_classes"], list):
                     raise ValueError("Missing 'allowed_classes' (list)")
-                if "examples" not in obj or not isinstance(obj["examples"], list):
+                if "examples" not in config_obj or not isinstance(config_obj["examples"], list):
                     raise ValueError("Missing 'examples' (list)")
-                save_extraction_config(obj)
+                    
+                save_func(config_obj)
                 messagebox.showinfo("Config", "Configuration saved. It will apply to new extractions.")
-                top.destroy()
+                window.destroy()
             except Exception as e:
                 messagebox.showerror("Config", f"Invalid JSON or schema: {e}")
 
         def on_reset():
             try:
-                save_extraction_config(get_default_config())
-                txt.delete("1.0", tk.END)
-                txt.insert("1.0", json.dumps(get_default_config(), ensure_ascii=False, indent=2))
+                default_config = reset_func()
+                save_func(default_config)
+                text_widget.delete("1.0", tk.END)
+                text_widget.insert("1.0", json.dumps(default_config, ensure_ascii=False, indent=2))
             except Exception as e:
                 messagebox.showerror("Config", f"Cannot reset: {e}")
 
-        ttk.Button(btns, text="Save", command=on_save).pack(side=tk.RIGHT, padx=6)
-        ttk.Button(btns, text="Reset to Default", command=on_reset).pack(side=tk.RIGHT)
+        ttk.Button(button_panel, text="Save", command=on_save).pack(side=tk.RIGHT, padx=6)
+        ttk.Button(button_panel, text="Reset to Default", command=on_reset).pack(side=tk.RIGHT)
+
+    def on_open_config_editor(self):
+        try:
+            from .extractors.utils import load_extraction_config, save_extraction_config, get_default_config
+        except Exception as e:
+            messagebox.showerror("Config", f"Cannot load config: {e}")
+            return
+            
+        config_data = load_extraction_config()
+        formatted_config = json.dumps(config_data, ensure_ascii=False, indent=2)
+        self._show_config_editor(formatted_config, save_extraction_config, get_default_config)
 
     # Reset helpers
     def _reset_database_and_papers(self):
@@ -684,7 +611,7 @@ class App(tk.Tk):
                 except Exception:
                     pass
 
-    def on_reset_now(self):
+    def on_reset_database(self):
         if messagebox.askyesno("Confirm Reset", "This will delete research.db and all files in papers/. Continue?"):
             self._reset_database_and_papers()
             self.status_var.set("Reset completed.")

@@ -27,3 +27,35 @@ RELEVANCE_EVALUATION_PROMPT = (
 
 # Gemini model
 GEMINI_MODEL: str = "gemini-2.5-flash"
+
+# Extraction configuration
+DEFAULT_ALLOWED_CLASSES = [
+    "sentiment analysis business application/use case",
+    "sentiment analysis tool/software",
+]
+
+EXTRACTION_PROMPT = (
+    "Extract only these two classes using exact spans and order of appearance: "
+    "1) sentiment analysis business application/use case, "
+    "2) sentiment analysis tool/software. "
+    "Return concise attributes when obvious (e.g., vendor, purpose)."
+)
+
+DEFAULT_EXTRACTION_EXAMPLES = [
+    {
+        "text": "We deployed a SensiStrength - sentiment analysis tool in our CRM workflow to flag negative customer feedback in online marketing.",
+        "extractions": [
+            {
+                "extraction_class": "sentiment analysis business application/use case",
+                "extraction_text": "flag customer feedback",
+            },
+            {
+                "extraction_class": "sentiment analysis tool/software",
+                "extraction_text": "SensiStrength",
+                "attributes": {
+                    "business sector": "online marketing"
+                },
+            },
+        ],
+    }
+]
