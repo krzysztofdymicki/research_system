@@ -1,77 +1,90 @@
 # Research System
 
-Local-first workflow for academic papers: search arXiv/CORE, curate relevant results, download PDFs, extract content, run strict JSON extraction with Pydantic validation, and prepare BERTopic corpora with interactive topic visualizations.
+A tool to support the process of searching and analyzing scientific publications. The application allows searching sources such as arXiv and CORE, evaluating the relevance of the results using a local language model, and then extracting structured data from selected documents.
 
-## Highlights
-- Search arXiv and CORE; save to SQLite.
-- Tkinter GUI tabs: Search, Search Results, Publications, JSON viewer, config editor.
-- Relevance Score column in Publications (join from raw search results).
-- Configurable extraction (prompt/classes/examples), strict validation, save only valid JSON.
-- Normalization + CSV exports for BERTopic (per-extraction and per-publication).
-- `bertopic_train.py` trains and outputs doc→topic mapping, topics list, and HTML visualizations.
-- Test DB utility for fast iterations.
+## Main Features
 
-## Setup (Windows PowerShell)
-1) Create and activate a Python 3.11 venv:
+*   **Publication Search**: Searches arXiv and CORE databases based on a given query.
+*   **Local Database**: Results are saved in a local SQLite database, allowing you to work with the data without re-running searches.
+*   **Web User Interface**: A web application based on Streamlit (`src/app.py`).
+*   **AI-Powered Relevance Analysis**: Ability to evaluate search results for relevance to a given research thesis using a locally run language model (via an LMStudio server).
+*   **Publication Management**: A process for selecting and "promoting" the most interesting results to a separate list of publications.
+*   **Downloading and Processing**: The application can download PDF files for publications and extract their content into Markdown format.
+*   **Data Extraction**: Using the `langextract` library powered by Google Gemini, it is possible to extract specific, structured information from the text (e.g., tool names, use cases), according to a given configuration.
+
+## Installation and Setup
+
+### 1. Prerequisites
+
+*   Python version 3.8 or newer.
+*   Access to an LMStudio server (for the relevance analysis feature).
+*   API keys for CORE and Google AI services.
+
+### 2. Environment Setup
+
+Using a Python virtual environment is recommended.
+
 ```powershell
-py -3.11 -m venv .venv
+# Create and activate a virtual environment
+py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
-2) Install the project and core deps:
+
+### 3. Install Dependencies
+
 ```powershell
+# Make sure you have the latest version of pip
 python -m pip install --upgrade pip
+
+# Install the project in editable mode (this will also install dependencies from pyproject.toml)
 python -m pip install -e .
 ```
-3) Optional — Topic modeling and visuals:
+
+### 4. API Key Configuration
+
+Create a `.env` file by copying the `.env.example` template and filling in your values.
+
 ```powershell
-pip install bertopic umap-learn hdbscan scikit-learn
-```
-4) Run the GUI:
-```powershell
-python .\src\app.py
+Copy-Item .env.example .env
 ```
 
-## Core Files
-- `src/app.py` — Tkinter GUI: search, analyze, promote, download, extract, view JSON, edit config.
-- `src/sources/*.py` — arXiv and CORE search implementations.
-- `src/db.py` — SQLite schema + helpers; `publications.extractions_json` stores validated extractions.
-- `src/extraction_config.py` — Config for prompt, allowed classes, examples.
-- `src/extractors/langextract_adapter.py` — Cloud adapter, unfenced→fenced JSON parsing, Pydantic validation, quiet logs.
-- `src/normalize_extractions.py` — Minimal normalization, per-extraction/per-publication CSV exports, optional dedupe.
-- `src/make_test_db.py` — Create small subset DB for testing.
-- `src/bertopic_train.py` — Train BERTopic; exports mapping, topics CSV, and Plotly HTML.
-
-## Exports
-- Per-extraction CSV:
-```powershell
-python -m src.normalize_extractions --db .\research.db --class both --dedupe-within-publication --export-csv .\debug\bertopic_docs.csv
+Then, edit the `.env` file with your API keys:
 ```
-- Per-publication CSV:
-```powershell
-python -m src.normalize_extractions --db .\research.db --class both --dedupe-within-publication --export-csv-publication .\debug\bertopic_pubs.csv
-```
-Normalization includes: Unicode NFKC, lowercasing, whitespace collapse, de-spaced token merging. Dedupe key: `(class, text_norm)`, preferring rows with non-empty sector.
+CORE_API_KEY="your_core_api_key"
+GOOGLE_API_KEY="your_google_api_key"
 
-## BERTopic & Visualizations
-Train and output mapping + topics + HTML:
-```powershell
-python .\src\bertopic_train.py `
-	--csv .\debug\bertopic_docs.csv `
-	--out-mapping .\debug\bertopic_doc_topics.csv `
-	--out-topics .\debug\bertopic_topics.csv `
-	--viz-dir .\debug\bertopic_viz `
-	--topn 8 `
-	--min-df 2
+# Optionally, if LMStudio is running on a different address
+# LMSTUDIO_ENDPOINT="http://another-address:1234/v1/chat/completions"
 ```
-Outputs:
-- `bertopic_doc_topics.csv` — `doc_id, publication_id, topic, probability, top_words`
-- `bertopic_topics.csv` — BERTopic topic info table
-- `bertopic_viz/` — `topics.html`, `barchart.html`, `hierarchy.html`, `heatmap.html`
 
-## Troubleshooting
-- Prefer Python 3.11 venv for BERTopic.
-- Ensure `pip` and `python` are from the same venv.
-- If exports are empty, confirm `publications.extractions_json` has validated items.
+### 5. Running the Application
+
+To run the application:
+
+```powershell
+streamlit run src/app.py
+```
+
+## Project Structure
+
+*   `src/app.py`: The main Streamlit web application file.
+*   `src/services.py`: Core business logic, connecting the individual components.
+*   `src/db/`: SQLite database schema definition and operations.
+*   `src/sources/`: Implementations for searching sources (arXiv, CORE).
+*   `src/evaluators/`: Client for communicating with LMStudio for relevance assessment.
+*   `src/extractors/`: Logic for data extraction from text using `langextract` and Gemini.
+*   `src/config.py`: Default configurations and constants, e.g., prompt templates.
+*   `research.db`: Default name for the SQLite database file.
+
+## LangExtract Extraction Configuration
+
+The process of extracting specific, structured information from text using LangExtract is configurable. The application uses default settings defined in `src/config.py`.
+
+You can override these settings through the "Extraction Config" tab in the web interface. When you save your changes, a `src/config/extraction_config.json` file is created, which will be used for future extractions. This allows you to define:
+*   `prompt`: The instruction for the language model.
+*   `allowed_classes`: A list of entity categories to be extracted.
+*   `examples`: Examples for the model (few-shot learning) to improve extraction quality.
 
 ## License
+
 MIT
