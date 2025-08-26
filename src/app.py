@@ -1,17 +1,7 @@
 import streamlit as st
 import pandas as pd
-from pathlib import Path
 import json
-import time
 from datetime import datetime
-from typing import Optional
-import threading
-import queue
-import sys
-import os
-
-# Add parent directory to path for imports
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.services import (
     SearchOptions,
@@ -55,6 +45,8 @@ if 'analysis_progress' not in st.session_state:
     st.session_state.analysis_progress = {"current": 0, "total": 0, "kept": 0}
 if 'last_search_results' not in st.session_state:
     st.session_state.last_search_results = None
+if 'last_promotion_result' not in st.session_state:
+    st.session_state.last_promotion_result = None
 
 # Custom CSS for better styling
 st.markdown("""
@@ -237,12 +229,12 @@ def render_search_tab():
         with col1:
             st.markdown("**Sources:**")
             use_arxiv = st.checkbox("arXiv", value=True, help="Academic preprints - requires field selection (Title/Abstract)")
-            use_core = st.checkbox("CORE", value=True, help="Full-text academic papers - searches entire content automatically")
+            use_core = st.checkbox("CORE", value=True, help="Publications - searches entire content automatically")
         
         with col2:
             st.markdown("**arXiv search in:**")
-            arxiv_title = st.checkbox("Title", value=True, help="Search in paper titles only")
-            arxiv_abstract = st.checkbox("Abstract", value=False, help="Search in paper abstracts only")
+            arxiv_title = st.checkbox("Title", value=True, help="Search in publication titles only")
+            arxiv_abstract = st.checkbox("Abstract", value=False, help="Search in publication abstracts only")
         
         submitted = st.form_submit_button("🚀 Search", type="primary", use_container_width=True)
     
@@ -429,75 +421,145 @@ def render_results_tab():
         if st.button("Promote Kept", type="primary"):
             with st.spinner("Promoting kept items..."):
                 promoted = promote_kept(min_score)  # używamy wybranego threshold
-                st.success(f"Promoted {promoted} items to Publications (score >= {min_score})")
+                
+                # Save promotion result for persistent display
+                st.session_state.last_promotion_result = {
+                    'promoted': promoted,
+                    'min_score': min_score,
+                    'time': datetime.now().strftime("%H:%M:%S")
+                }
+                
                 load_data()
                 st.rerun()  # Odświeży aplikację po promocji
+    
+    # Display persistent promotion result if available
+    if st.session_state.last_promotion_result:
+        result = st.session_state.last_promotion_result
+        st.success(f"[{result['time']}] Promoted {result['promoted']} items to Publications (score >= {result['min_score']})")
 
 
 def render_publications_tab():
     st.header("Publications")
     
-    # Action buttons
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    with col1:
-        if st.button("Download PDFs"):
-            with st.spinner("Downloading PDFs..."):
-                attempted, downloaded = download_pdfs_batch()
-                st.success(f"Downloaded {downloaded}/{attempted} PDFs")
-                load_data()
-                st.rerun()
-    
-    with col2:
-        if st.button("Extract Markdown"):
-            with st.spinner("Extracting text..."):
-                attempted, extracted = extract_markdown_batch()
-                st.success(f"Extracted {extracted}/{attempted} documents")
-                load_data()
-                st.rerun()
-    
-    with col3:
-        if st.button("Run NLP Extraction"):
-            st.info("Select a publication from the table below first")
-    
-    with col4:
-        if st.button("Extract All"):
-            with st.spinner("Running NLP on all publications..."):
-                conn = init_db()
-                pubs = list_publications(conn, limit=10000)
-                to_process = [p for p in pubs if p.get("markdown") and not p.get("extractions_json")]
-                
-                if not to_process:
-                    st.info("Nothing to process")
-                else:
-                    progress_bar = st.progress(0)
-                    status = st.empty()
-                    processed = 0
-                    
-                    for idx, pub in enumerate(to_process):
-                        status.text(f"Processing {idx+1}/{len(to_process)}...")
-                        progress_bar.progress((idx + 1) / len(to_process))
-                        
-                        try:
-                            result = extract_from_publication(str(pub["id"]))
-                            if result.get("ok"):
-                                json_str = json.dumps(result, ensure_ascii=False)
-                                update_publication_extractions(
-                                    conn, publication_id=pub["id"],
-                                    extractions_json=json_str
-                                )
-                                processed += 1
-                        except:
-                            continue
-                    
-                    st.success(f"Processed {processed}/{len(to_process)} publications")
-                    load_data()
-                    st.rerun()
-    
-    # Publications table
+    # Check publications availability
     if st.session_state.publications_df is None or st.session_state.publications_df.empty:
         st.info("No publications yet. Analyze and promote search results first!")
         return
+    
+    # Get current publications data for validation
+    conn = init_db()
+    pubs = list_publications(conn, limit=10000)
+    
+    # Count publications by status
+    total_pubs = len(pubs)
+    pubs_with_pdf = len([p for p in pubs if p.get("pdf_path")])
+    pubs_without_pdf = total_pubs - pubs_with_pdf
+    pubs_with_markdown = len([p for p in pubs if p.get("markdown")])
+    pubs_without_markdown = total_pubs - pubs_with_markdown
+    pubs_with_extractions = len([p for p in pubs if p.get("extractions_json")])
+    pubs_without_extractions = total_pubs - pubs_with_extractions
+    
+    # Action buttons
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        download_pdfs_btn = st.button(
+            "Download PDFs", 
+            use_container_width=True,
+            help="Download PDF files for all publications that don't have them yet"
+        )
+    
+    with col2:
+        extract_markdown_btn = st.button(
+            "Extract Text", 
+            use_container_width=True,
+            help="Extract readable text from PDF documents for further processing"
+        )
+    
+    with col3:
+        extract_nlp_btn = st.button(
+            "Run LangExtract", 
+            use_container_width=True,
+            help="Run LangExtract NLP processing on publications using configuration from Extraction Config tab"
+        )
+    
+    # Handle Download PDFs
+    if download_pdfs_btn:
+        if pubs_without_pdf == 0:
+            st.success("All publications already have PDFs downloaded!")
+        else:
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            with st.spinner("Downloading PDFs..."):
+                status_text.text("Starting PDF downloads...")
+                progress_bar.progress(0.1)
+                
+                attempted, downloaded = download_pdfs_batch()
+                
+                progress_bar.progress(1.0)
+                status_text.text(f"Completed: {downloaded}/{attempted} PDFs downloaded")
+            
+            st.success(f"Downloaded {downloaded}/{attempted} PDFs")
+            load_data()
+            st.rerun()
+    
+    # Handle Extract Markdown
+    if extract_markdown_btn:
+        if pubs_with_pdf == 0:
+            st.warning("No PDFs available. Download PDFs first!")
+        elif pubs_without_markdown == 0:
+            st.success("All publications with PDFs already have text extracted!")
+        else:
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            with st.spinner("Extracting text..."):
+                status_text.text("Starting text extraction...")
+                progress_bar.progress(0.1)
+                
+                attempted, extracted = extract_markdown_batch()
+                
+                progress_bar.progress(1.0)
+                status_text.text(f"Completed: {extracted}/{attempted} documents extracted")
+            
+            st.success(f"Extracted text from {extracted}/{attempted} documents")
+            load_data()
+            st.rerun()
+    
+    # Handle Run LangExtract
+    if extract_nlp_btn:
+        to_process = [p for p in pubs if p.get("markdown") and not p.get("extractions_json")]
+        
+        if pubs_with_markdown == 0:
+            st.warning("No extracted text available. Extract text from PDFs first!")
+        elif len(to_process) == 0:
+            st.success("All publications with text already have LangExtract processing completed!")
+        else:
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            processed = 0
+            
+            with st.spinner("Running LangExtract..."):
+                for idx, pub in enumerate(to_process):
+                    status_text.text(f"Processing: {idx+1}/{len(to_process)}")
+                    progress_bar.progress((idx + 1) / len(to_process))
+                    
+                    try:
+                        result = extract_from_publication(str(pub["id"]))
+                        if result.get("ok"):
+                            json_str = json.dumps(result, ensure_ascii=False)
+                            update_publication_extractions(
+                                conn, publication_id=pub["id"],
+                                extractions_json=json_str
+                            )
+                            processed += 1
+                    except:
+                        continue
+            
+            st.success(f"Completed LangExtract processing for {processed}/{len(to_process)} publications")
+            load_data()
+            st.rerun()
     
     st.subheader("Publications Table")
     
@@ -534,45 +596,25 @@ def render_publications_tab():
         selected_pub = df_display[df_display['title'] == selected_title].iloc[0]
         pub_id = selected_pub['id']
         
+        # Get full publication data for selected item
+        selected_pub_full = next((p for p in pubs if str(p["id"]) == str(pub_id)), None)
+        
         st.subheader(f"Selected: {selected_pub['title'][:100]}...")
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         
         with col1:
-            if st.button("🔬 Run NLP Extraction (Selected)"):
-                with st.spinner("Running NLP extraction..."):
-                    try:
-                        result = extract_from_publication(str(pub_id))
-                        if result.get("ok"):
-                            json_str = json.dumps(result, ensure_ascii=False)
-                            conn = init_db()
-                            update_publication_extractions(
-                                conn, publication_id=pub_id,
-                                extractions_json=json_str
-                            )
-                            st.success("Extraction completed!")
-                            load_data()
-                        else:
-                            st.error(f"Error: {result.get('error')}")
-                    except Exception as e:
-                        st.error(f"Error: {str(e)}")
-        
-        with col2:
             if st.button("View Extractions"):
-                conn = init_db()
-                pubs = list_publications(conn, limit=10000)
-                pub_data = next((p for p in pubs if str(p["id"]) == str(pub_id)), None)
-                
-                if pub_data and pub_data.get("extractions_json"):
+                if selected_pub_full and selected_pub_full.get("extractions_json"):
                     try:
-                        extractions = json.loads(pub_data["extractions_json"])
+                        extractions = json.loads(selected_pub_full["extractions_json"])
                         st.json(extractions)
                     except:
-                        st.text(pub_data.get("extractions_json"))
+                        st.text(selected_pub_full.get("extractions_json"))
                 else:
                     st.info("No extractions yet")
         
-        with col3:
+        with col2:
             st.metric("Score", selected_pub.get('score', '-'))
 
 
@@ -580,8 +622,8 @@ def render_config_tab():
     st.header("Extraction Configuration")
     
     st.markdown("""
-    Configure the NLP extraction settings. This affects how the system extracts 
-    sentiment analysis applications and tools from papers.
+    Configure the LangExtract NLP processing settings. This affects how the system 
+    extracts content from publications.
     """)
     
     # Load current config
@@ -602,7 +644,7 @@ def render_config_tab():
     with col2:
         st.markdown("### Actions")
         
-        if st.button("💾 Save Config", type="primary"):
+        if st.button("Save Config", type="primary", use_container_width=True):
             try:
                 new_config = json.loads(config_json)
                 
@@ -623,17 +665,14 @@ def render_config_tab():
             except Exception as e:
                 st.error(f"Error: {str(e)}")
         
-        if st.button("Reset to Default"):
+        if st.button("Reset to Default", use_container_width=True):
             default = get_default_config()
             save_extraction_config(default)
             st.success("Reset to default configuration")
             st.rerun()
         
-        if st.button("Copy Config"):
-            st.code(config_json, language="json")
-        
         # Help section
-        with st.expander("📖 Configuration Help"):
+        with st.expander("Configuration Help"):
             st.markdown("""
             **Configuration fields:**
             
@@ -648,7 +687,7 @@ def render_config_tab():
             Each extraction should have:
             - `extraction_class`: One of the allowed classes
             - `extraction_text`: The extracted text
-            - `attributes` (optional): Additional metadata
+            - `attributes` (optional): Additional properties
             """)
 
 

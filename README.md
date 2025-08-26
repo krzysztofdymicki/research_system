@@ -62,7 +62,7 @@ GOOGLE_API_KEY="your_google_api_key"
 To run the application:
 
 ```powershell
-streamlit run src/app.py
+python -m streamlit run src/app.py
 ```
 
 ## Project Structure
