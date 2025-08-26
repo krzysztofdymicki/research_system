@@ -45,6 +45,9 @@ debug
 research_test.db
 src/make_test_db.py
 
-#BERT
-src/normalize_extractions.py
-src/bertopic_train.py
+#BERT (old rules - files moved to topic_modeling)
+# src/normalize_extractions.py
+# src/bertopic_train.py
+
+# Topic modeling (private)
+src/topic_modeling/
