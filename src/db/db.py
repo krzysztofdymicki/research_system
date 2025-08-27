@@ -278,6 +278,23 @@ def list_publications(conn: sqlite3.Connection, limit: int = 500) -> List[Dict[s
     return rows
 
 
+def get_publication_by_id(conn: sqlite3.Connection, publication_id: str) -> Optional[Dict[str, Any]]:
+    """Fetches a single publication by its primary key."""
+    cur = conn.execute("SELECT * FROM publications WHERE id = ?", (publication_id,))
+    row = cur.fetchone()
+    if not row:
+        return None
+    
+    cols = [d[0] for d in cur.description]
+    pub_dict = dict(zip(cols, row))
+    
+    try:
+        pub_dict["authors"] = json.loads(pub_dict.get("authors_json") or "[]")
+    except (json.JSONDecodeError, TypeError):
+        pub_dict["authors"] = []
+        
+    return pub_dict
+
 def update_publication_assets(
     conn: sqlite3.Connection,
     *,

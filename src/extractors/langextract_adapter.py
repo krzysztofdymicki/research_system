@@ -9,7 +9,7 @@ from ..config import (
     GEMINI_MODEL,
     GOOGLE_API_KEY,
 )
-from ..db.db import init_db, list_publications, update_publication_extractions
+from ..db.db import init_db, get_publication_by_id, update_publication_extractions
 from pydantic import BaseModel, Field, ValidationError, ConfigDict, field_validator
 from .utils import load_extraction_config
 @contextmanager
@@ -202,10 +202,9 @@ def extract_from_text(text: str, provider_override: Optional[str] = None, includ
         return {"ok": False, "error": str(e), "payload": None, "raw_text": ""}
 
 
-def extract_from_publication(publication_id: str, provider: Optional[str] = None, include_debug: bool = False, enable_chunking: bool = True) -> Dict[str, Any]:
-    conn = init_db()
-    rows = list_publications(conn, limit=100000)
-    row = next((r for r in rows if str(r["id"]) == str(publication_id)), None)
+def extract_from_publication(publication_id: str, db_name: str = "research.db", provider: Optional[str] = None, include_debug: bool = False, enable_chunking: bool = True) -> Dict[str, Any]:
+    conn = init_db(db_name)
+    row = get_publication_by_id(conn, publication_id)
     if not row:
         return {"ok": False, "error": f"Publication id not found: {publication_id}", "extractions": []}
     md = row.get("markdown")

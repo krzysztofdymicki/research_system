@@ -29,13 +29,13 @@ class SearchOptions(NamedTuple):
     arxiv_in_abstract: bool = False
 
 
-def run_search_and_save(opts: SearchOptions) -> Tuple[int, int]:
+def run_search_and_save(opts: SearchOptions, db_name: str = "research.db") -> Tuple[int, int]:
     """Run search across enabled providers and save results to database.
     
     Returns:
         Tuple of (total_found, unique_saved)
     """
-    conn = init_db()
+    conn = init_db(db_name)
 
     providers = []
     sources_used: List[str] = []
@@ -82,6 +82,7 @@ def run_search_and_save(opts: SearchOptions) -> Tuple[int, int]:
 
 
 def analyze_with_progress(
+    db_name: str = "research.db",
     search_id: Optional[str] = None,
     threshold: int = 70,
     cancel_flag: Optional[Callable[[], bool]] = None,
@@ -91,6 +92,7 @@ def analyze_with_progress(
     """Analyze pending items with AI relevance scoring.
 
     Args:
+        db_name: Name of the database file.
         search_id: Optional filter by specific search
         threshold: Minimum score to consider "kept"
         cancel_flag: Callable returning True to cancel processing
@@ -100,7 +102,7 @@ def analyze_with_progress(
     Returns:
         Tuple of (analyzed_count, kept_count_above_threshold, scored_successfully)
     """
-    conn = init_db()
+    conn = init_db(db_name)
     rows = list_raw_results(conn, search_id=search_id, only_pending=True, limit=100000)
     total = len(rows)
     
@@ -156,13 +158,13 @@ def analyze_with_progress(
     return analyzed, kept, scored_successfully
 
 
-def promote_kept(threshold: int = 70, search_id: Optional[str] = None) -> int:
+def promote_kept(threshold: int = 70, search_id: Optional[str] = None, db_name: str = "research.db") -> int:
     """Promote raw results with score >= threshold to publications.
     
     Returns:
         Number of items promoted
     """
-    conn = init_db()
+    conn = init_db(db_name)
     rows = list_raw_results(conn, search_id=search_id, only_pending=False, limit=100000)
     
     ids_to_promote: List[int] = []
@@ -182,13 +184,13 @@ def promote_kept(threshold: int = 70, search_id: Optional[str] = None) -> int:
     return promote_to_publications(conn, raw_ids=ids_to_promote)
 
 
-def download_pdfs_batch() -> Tuple[int, int]:
+def download_pdfs_batch(db_name: str = "research.db") -> Tuple[int, int]:
     """Download PDFs for all publications missing them.
     
     Returns:
         Tuple of (attempted, successfully_downloaded)
     """
-    conn = init_db()
+    conn = init_db(db_name)
     publications = list_publications(conn, limit=100000)
     
     attempted = 0
@@ -212,13 +214,13 @@ def download_pdfs_batch() -> Tuple[int, int]:
     return attempted, downloaded
 
 
-def extract_markdown_batch() -> Tuple[int, int]:
+def extract_markdown_batch(db_name: str = "research.db") -> Tuple[int, int]:
     """Extract markdown from PDFs for all publications missing it.
     
     Returns:
         Tuple of (attempted, successfully_extracted)
     """
-    conn = init_db()
+    conn = init_db(db_name)
     publications = list_publications(conn, limit=100000)
     
     attempted = 0
